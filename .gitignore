@@ -2,4 +2,5 @@
 build/
 pubspec.lock
 *.so
+*.o
 __pycache__/

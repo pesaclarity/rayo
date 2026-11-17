@@ -1,93 +1,88 @@
-# rayo model format, version 1
+# rayo model format
 
-A rayo model is a [GGUF](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md) file
-(version 3): ggml's own model file, holding typed metadata and tensors. rayo reads:
-
-| Key | Type | |
-| --- | --- | --- |
-| `rayo.format_version` | uint32 | `1`. rayo refuses any other value. |
-| `rayo.graph` | string | The graph, below. |
-| `general.architecture` | string | `rayo` (informational). |
-| `general.name` | string | The model's name (informational). |
-
-Any other metadata is the model's own (labels, sizes, provenance) and is passed to the
-caller as `RayoModel.metadata`. Writers should record where the weights came from, for
-example `rayo.source.file` and `rayo.source.sha256`.
-
-Tensors may be `F32`, `F16` or `Q8_0` (blocks of 32 int8 values with one float16 scale; the
-innermost size must be a multiple of 32). Biases, norms and small tables are best kept `F32`.
-
-## Shapes
-
-As in ggml, shapes list the **innermost dimension first**. A sequence of `T` vectors of size
-`C` is `[C, T]`, stored as `T` rows of `C` values; a dense layer's weight with `in` inputs
-and `out` outputs is `[in, out]` (NumPy shape `(out, in)`).
-
-Sizes in `input` and `state` lines, and in attributes, are integers, **size symbols**, or
-sums and differences of them: `T`, `P+T`, `T-1`. The caller binds symbols before each run
-(`RayoSession.bind`), so one graph runs on sequences of any length.
-
-## The graph
-
-Plain text, one statement per line; `#` starts a comment.
+A rayo model is a **plain-weights file** (PCWT, version 1), the format pesaclarity-ml writes
+for the app's models ([pesaclarity-ml docs/WEIGHTS.md](https://github.com/pesaclarity/pesaclarity-ml/blob/dev/docs/WEIGHTS.md)),
+whose JSON header also holds a **`graph`**: the ops that run the tensors. The graph is an
+optional header field, which version 1 allows ("unknown header fields are ignored"), so one
+file serves rayo and any other reader of version 1 alike.
 
 ```
-input  <name> <i32|f32> <size>...     # a tensor the caller sets before each run
-state  <name> f32 <size>...           # kept across runs, zeroed by reset(); integer sizes
-output <name> <node>                  # read with output(name) after a run, as float32
-<node> = <op> <arg>... [<key>=<value>]...
+"PCWT" | uint32 version (1) | uint32 header length H | UTF-8 JSON header (H bytes) | tensors
 ```
 
-Arguments name inputs, states, earlier nodes or tensors in the file. Nodes run in order.
+All little-endian; the tensor data starts on a 4-byte boundary. rayo checks every size and
+offset against the file before it uses them, and refuses what does not fit rather than
+guessing.
+
+## Header fields rayo reads
+
+| Field | |
+| --- | --- |
+| `format_version` | `1`, as bytes 4-7. |
+| `model` | the model's name, such as `ask-reader`. |
+| `tensors` | as WEIGHTS.md: `name`, `dtype` (`float32` or `int8`), row-major `shape`, `offset`, `bytes`, and for int8 a `quantization` (`axis` or null, `zero_point`, `scales_offset`, `scales_bytes`). |
+| `graph` | the graph, below. Required by rayo. |
+| `metadata` | optional object, passed to the caller as JSON (labels, sizes, provenance). |
+
+## The graph (version 1)
+
+```json
+"graph": {
+  "version": 1,
+  "symbols": {"T": 96},
+  "inputs": [{"name": "tokens", "dtype": "int32", "shape": ["T"]}],
+  "nodes": [
+    {"op": "gather", "inputs": ["token_embedding.table", "tokens"], "output": "emb"},
+    {"op": "conv1d", "inputs": ["emb", "conv_1.kernel", "conv_1.bias"], "output": "c1",
+     "size": 3, "dilation": 1, "activation": "relu", "input_quantization": "tensor_phases"}
+  ],
+  "outputs": [{"name": "slots", "node": "slots"}]
+}
+```
+
+- `symbols`: size symbols and the largest value of each. A session plans its memory for the
+  largest sizes once; the caller binds smaller ones before a run.
+- `inputs`: `dtype` `int32` or `float32`; `shape` lists whole numbers or symbols.
+- `nodes`: run in order. `inputs` name graph inputs, earlier nodes' outputs, or tensors of the
+  file; the other fields are the op's attributes.
+- `outputs`: which nodes the caller reads, as float32.
+
+Shapes are row-major, outermost first: a sequence of `T` vectors of size `C` is `[T, C]`.
 
 ## Ops
 
-All results are float32 unless said otherwise.
-
-| Op | Arguments | Attributes | Result |
+| Op | Inputs | Attributes | Output |
 | --- | --- | --- | --- |
-| `get_rows` | table `[C, V]`, ids i32 `[T]` | | `[C, T]`: row `ids[i]` for each i |
-| `range` | | `start`, `len` | i32 `[len]`: `start, start + 1, ...` |
-| `mask_pos` | ids i32 `[T]` | | `[T]`: 1 where the id is above 0, else 0 |
-| `concat` | a, b | `dim` (default 0) | a and b joined along `dim` |
-| `dense` | x `[in, ...]`, w `[in, out]`, b `[out]` (optional) | `act` | `w x + b` |
-| `conv1d` | x `[C, T]`, w `[k*C, out]`, b `[out]` (optional) | `k`, `d` (dilation, default 1), `act` | same-padded 1-D convolution over positions: tap j of position i reads position `i + (j - (k-1)/2) * d`, zeros outside; w's element (j, c) at `j*C + c` |
-| `add` | a, b (broadcast to a) | `act` | a + b |
-| `mul` | a, b (broadcast to a) | | a * b |
-| `scale` | x | `s` | x * s |
-| `relu`, `gelu`, `gelu_erf` | x | | activations (`gelu` is ggml's tanh approximation) |
-| `softmax` | x | | softmax over the innermost dimension |
-| `layer_norm` | x, g (optional), b (optional) | `eps` (default 1e-5) | normalised over the innermost dimension, `* g + b` |
-| `masked_max`, `masked_mean` | x `[C, T]`, mask `[T]` | `empty` (masked_max; default 0) | `[C]`: max or mean over the positions where mask > 0; with none, `empty` (max) or 0 (mean) |
-| `cols` | x `[C, T]` | `start`, `len` | columns (positions) `start .. start+len-1` |
-| `write` | state `[C, N]`, x `[C, T]` | `at` | copies x into the state's columns `at .. at+T-1`, then gives columns `0 .. at+T-1`; runs before every later node |
-| `attention` | q `[D, T]`, k `[D, S]`, v `[D, S]` | `heads`, `causal` (0/1), `scale` (default 1/sqrt(D/heads)) | multi-head scaled dot-product attention; the T queries sit at positions `S-T .. S-1`, and with `causal=1` each sees only keys at or before its own position |
+| `gather` | table `[rows, width]` (float32, or int8 with one scale), ids int32 `[n]` | | float32 `[n, width]`; an id outside the table fails the run |
+| `concat` | a `[..., p]`, b `[..., q]` | | `[..., p + q]` |
+| `mask` | ids int32 | | 1 where the id is above 0, else 0 |
+| `add` | a, b of one shape | | a + b |
+| `softmax` | x | | over the innermost dimension |
+| `dense` | x `[..., in]`, kernel `[out, in]`, bias `[out]` (optional) | `activation` (`none`, `relu`), `input_quantization` | `[..., out]` |
+| `conv1d` | x `[T, C]`, kernel `[out, 1, size, C]` (TFLite's) or `[out, size, C]`, bias | `size`, `dilation` (default 1), `activation`, `input_quantization` | `[T, out]`, same padding: tap j of position t reads `t + (j - (size-1)/2) * dilation`, zeros outside |
+| `masked_max` | x `[T, C]`, mask `[T]` | `fill` (default 10000) | `[C]`: max over t of `x * m - (1 - m) * fill` |
+| `masked_mean` | x `[T, C]`, mask `[T]` | | `[C]`: sum over t of `x * m`, divided by max(sum of m, 1) |
 
-`act` is `none` (default), `relu`, `gelu` or `gelu_erf`.
+### int8 kernels
 
-An unknown op fails the load. An unknown tensor or symbol, or shapes that do not fit, fail
-the run with a message instead of crashing.
+A `dense` or `conv1d` with an int8 kernel (symmetric, one scale per output or one in all) runs
+as TFLite's dynamic-range ("hybrid") kernels do, so a model exported from TFLite gives
+TFLite's numbers:
 
-## A decoder with a key/value cache
+1. the float input is quantised to int8 on the fly, asymmetrically, its range widened to
+   include 0, halves rounded away from zero (TFLite's `AsymmetricQuantizeFloats`):
+   - `input_quantization: "rows"` (dense, the default): one scale and zero point per row;
+   - `input_quantization: "tensor_phases"` (conv1d, the default): one for the whole input,
+     except that a dilated convolution (TFLite's `SPACE_TO_BATCH_ND`) quantises each of its
+     `dilation` phases (positions t with `t % dilation == p`) on its own;
+2. the product is exact in int32;
+3. `y = bias + (acc - zero_point * rowsum(kernel)) * input_scale * kernel_scale`, then the
+   activation.
 
-```
-input tokens i32 T
-state kc f32 64 128          # keys for up to 128 positions
-state vc f32 64 128
-pos = range start=P len=T
-h = add e pe                 # token and position embeddings, ...
-k = dense h wk
-v = dense h wv
-ks = write kc k at=P
-vs = write vc v at=P
-a = attention q ks vs heads=4 causal=1
-```
+Positions outside the sequence count as float zeros (the zero point in int8).
 
-Run the prompt once with `P=0, T=n`, then each new token with `P=n, T=1`, `P=n+1, T=1`,
-and so on; `reset()` before the next sequence.
+## Versions
 
-## Versioning
-
-A change that older rayo versions would misread (a changed meaning, a new statement kind)
-bumps `rayo.format_version`. New ops do not: an older rayo refuses to load a graph with an
-op it does not know, naming the op.
+A change that older rayo versions would misread bumps `graph.version`; rayo refuses a version
+it does not read, and a graph with an op it does not know, naming it. New ops and attributes
+with defaults that keep the old meaning do not bump it.

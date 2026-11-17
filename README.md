@@ -1,18 +1,21 @@
 # rayo
 
-On-device inference for Dart and Flutter, on [ggml](https://github.com/ggml-org/ggml)
-compiled from source. Built for [Pesa Clarity](https://github.com/pesaclarity), whose small
-models (a question reader, a reply writer) run on the phone, offline, in the Play and the
-F-Droid builds alike.
+On-device inference in plain C11, for Dart and Flutter. Built for
+[Pesa Clarity](https://github.com/pesaclarity), whose small models (a question reader, a reply
+writer) run on the phone, offline, in the Play and the F-Droid builds alike.
 
-- **No Google ML code**: no TFLite/LiteRT, no XNNPACK. The engine is ggml (MIT), the C
-  library behind llama.cpp, with NEON and SSE/AVX kernels, int8 and float16 weights, a
-  thread pool, and the ops transformers need, so it grows to larger models.
-- **No prebuilt binaries**: a Dart build hook compiles rayo and the vendored ggml with the
-  platform's C/C++ compiler (the Android NDK, Xcode, clang/gcc). Nothing is downloaded at
-  build time, so F-Droid builds it offline like the rest of the app.
-- **Small**: the Android library is about 1.4 MB (arm64-v8a, stripped), 1.2 MB
-  (armeabi-v7a) and 1.6 MB (x86_64).
+- **Our own engine, no Google code**: no TFLite/LiteRT, no XNNPACK, and no other library. The
+  kernels for exactly the ops our models use, portable C first, SIMD where it pays.
+- **Built from source**: a Dart build hook compiles `src/` with the platform's C compiler
+  (the NDK, Xcode, clang/gcc). Nothing is downloaded, nothing is prebuilt, so F-Droid builds
+  it offline like the rest of the app. No C++ anywhere.
+- **Small**: the Android library is about 52 KB (arm64-v8a), 41 KB (armeabi-v7a) and 53 KB
+  (x86_64), stripped.
+- **Memory planned once**: a session plans every activation into one arena when it is made
+  (buffers whose lifetimes do not overlap share memory); a run allocates nothing.
+- **TFLite's numbers**: int8 layers run exactly as TFLite's dynamic-range kernels do, so a
+  model exported from TFLite gives the same outputs (the Ask reader: every label, probabilities
+  within 4e-5).
 
 ## Use
 
@@ -28,76 +31,94 @@ dependencies:
 import 'package:rayo/rayo.dart';
 
 final model = RayoModel.load(bytes, sha256: expectedSha256);
-final session = model.session(threads: 1);
-session
-  ..bind('T', tokens.length)
-  ..setInt32('tokens', tokens)
-  ..run();
-final logits = session.output('logits'); // Float32List data, shape innermost first
+final session = RayoSession(model); // keep it for many runs
+session.bind('T', 96);
+session.inputInt32(0).setAll(0, tokens); // written in place
+session.run();
+final intent = session.outputFloat32(1); // read in place, until the next run
 session.close();
 model.close();
 ```
 
-- `RayoModel.load` / `loadFile` read a GGUF model and, given `sha256`, refuse bytes that
-  do not hash to it. `metadata`, `inputs`, `states` and `outputs` describe it.
-- A `RayoSession` holds a model's threads, scratch memory and state (such as a key/value
-  cache; `reset()` zeroes it). `run()` computes on the calling thread; to keep a UI free,
-  pass `session.address` to another isolate and use `RayoSession.fromAddress` there.
-- `rayoAvailable()` says whether the native library loaded, so an app can fall back to
-  something else on a platform rayo was not built for.
-- Errors (a damaged model, a wrong input size, a shape that does not fit) throw
-  `RayoException`.
+- `RayoModel.load` / `loadFile` read a model, check its SHA-256 if given, and keep their own
+  copy of the bytes. `name`, `metadata`, `inputs` and `outputs` describe it.
+- `RayoSession` holds the model's planned memory. Inputs and outputs are views of it: no copy
+  in, none out. `bind` sets a size symbol (such as `T`) for the next runs.
+- `runInIsolate(session, task)` runs a task on the session in another isolate, so a UI never
+  waits. Runs on one session must not overlap.
+- `rayoAvailable()` says whether the native library loaded, so an app can fall back.
+- Errors (a damaged file, a size that does not fit, an id out of range) throw
+  `RayoException`; the C library never aborts on bad input.
+
+From C, include `rayo/rayo.h`: `rayo_model_create` / `rayo_model_destroy`,
+`rayo_session_create` / `rayo_session_destroy`, `rayo_session_bind`, `rayo_session_input`,
+`rayo_session_run`, `rayo_session_output`, `rayo_session_memory`. Every function documents who
+owns what; destroy functions accept NULL.
 
 ## Models
 
-A model is a GGUF file with its graph as text in the metadata: a list of ops (embeddings,
-dense layers, 1-D convolutions, layer norm, GELU, attention with a key/value cache, masked
-pooling and a few more) over named tensors. [docs/FORMAT.md](docs/FORMAT.md) specifies it.
-Graphs take size symbols, so one model runs on inputs of any length, and a reader can run
-on a question's real tokens instead of its padding.
+A model is a plain-weights file (PCWT) with its graph in the header:
+[docs/FORMAT.md](docs/FORMAT.md). Pesa Clarity's are written by
+[pesaclarity-ml](https://github.com/pesaclarity/pesaclarity-ml). `tool/make_test_models.py`
+(NumPy only) writes the small random models the tests use, with the outputs NumPy computes.
 
-Pesa Clarity's models are exported for rayo by
-[pesaclarity-ml](https://github.com/pesaclarity/pesaclarity-ml) (`akili.export.rayo`).
-`tool/gguf.py` (NumPy only) writes and reads the files; `tool/make_test_models.py` writes
-the small random models the tests use.
+## Layout
 
-## Platforms
+```
+include/rayo/     public headers: rayo.h (all of them), types.h, error.h, tensor.h,
+                  model.h, session.h, sha256.h, version.h
+src/core/         allocation, arena, JSON, tensors, messages
+src/format/       the PCWT reader and its checks
+src/graph/        the graph, shapes and the memory plan
+src/ops/          one file per op family, and the registry
+src/kernels/      generic.c, x86.c (SSE4.1/AVX2), x86_vnni.c, neon.c, neon_dotprod.c,
+                  quantize.c, select.c (which kernels this CPU runs)
+src/model.c, src/session.c, src/sha256/
+lib/              the Dart API: bindings/, model.dart, session.dart, isolate_runner.dart, ...
+tests/            the C tests (tests/test_*.c) and test models
+tools/            ask_reader_check.c: a real model against TFLite's recorded outputs, timed
+```
 
-| Target | Built by the hook | Tested |
+## Kernels
+
+The int8 products have a generic C version and SIMD ones, each checked against the generic one
+in the tests:
+
+| Build | Baseline | Chosen at run time when the CPU has it |
 | --- | --- | --- |
-| Android arm64-v8a, armeabi-v7a, x86_64 | NDK clang | compiled and linked; not yet run on a phone |
-| Linux x86_64 | clang/gcc | the test suite (assumes AVX2) |
-| iOS, macOS | Xcode clang | not yet built |
+| Android arm64-v8a | NEON (ARMv8.0) | SDOT dot product (ARMv8.2) |
+| Android armeabi-v7a | NEON | |
+| Android x86_64 | SSE4.1 | AVX-VNNI |
+| Linux x86_64 | AVX2 | AVX-VNNI |
 
-arm64 is built for the ARMv8.0 baseline (NEON), so it runs on every 64-bit Android phone.
-Newer cores' dot-product and float16 instructions are not used yet; dispatching to them at
-run time is future work.
+## Speed
 
-## Build
+The Ask reader (96 positions, int8, one thread) on one core of a 2.1 GHz Xeon, per question,
+with the same machine's TFLite (Python, `num_threads=1`) for comparison:
 
-`dart test` or a Flutter build runs `hook/build.dart`, which compiles ggml's C and C++ halves
-into two static libraries and links them with `src/rayo.cpp` into `librayo`. The first build
-takes about a minute per target; later builds are cached.
+| | median |
+| --- | --- |
+| rayo, AVX-VNNI (chosen at run time) | 0.18 ms |
+| rayo, AVX2 | 0.34 ms |
+| rayo, SSE4.1 (the Android x86_64 baseline) | 0.66 ms |
+| rayo, generic C (compiler-vectorised) | 0.80 ms |
+| TFLite with XNNPACK | 0.08 ms |
+| TFLite built-in kernels | 0.28 ms |
 
-The ggml sources in `third_party/ggml` are the CPU part of ggml **v1.0.0**, commit
-`417a024b4fb6bc3116d41af7c067166a039bdf12`, copied unchanged by `tool/vendor_ggml.sh`,
-which records the commit in `third_party/ggml/PIN` and every file's SHA-256 in
-`third_party/ggml/SHA256SUMS`. `tool/check` verifies them. To move to another ggml
-release, change the tag and commit in `tool/vendor_ggml.sh`, run it, and review the diff.
+Loading the model takes about 0.2 ms and making a session about 0.15 ms. Memory: the file's
+copy (251 KB), the session's arena (241 KB) and 82 KB of tables. Measured with
+`tools/ask_reader_check.c`, which also prints the time per op. Not yet measured on a phone.
 
 ## Develop
 
 ```sh
 dart pub get
-tool/check     # vendored sources, test models, format, analyze, tests
+tool/check   # C tests (generic, and AVX2 under ASan/UBSan), formats, Dart analyze and tests
 ```
 
-Commits follow [Conventional Commits](https://www.conventionalcommits.org/); the changelog
-is written from them.
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/); the changelog is
+written from them.
 
 ## Licence
 
-rayo is licensed under the GNU Affero General Public License v3.0 (see `LICENSE`), like the
-Pesa Clarity app. The vendored ggml, including the llamafile sgemm in
-`third_party/ggml/src/ggml-cpu/llamafile` (Mozilla Foundation), is under the MIT licence in
-`third_party/ggml/LICENSE`.
+GNU Affero General Public License v3.0 (`LICENSE`), like the Pesa Clarity app.

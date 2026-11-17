@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Writes the test models in test/models and the outputs NumPy computes for them.
+"""Writes rayo's test models (tests/models/*.weights) and the outputs NumPy computes for them
+(tests/models/expected.json). Random weights from a fixed seed: no trained model, no data.
 
-Random weights from a fixed seed: no trained model, no real data. Each model exercises a set
-of ops; test/runtime_test.dart checks rayo's outputs against the recorded NumPy ones.
+``reader`` has every op the Ask reader uses, run as TFLite runs a dynamic-range-quantised
+model (int8 kernels, inputs quantised on the fly). ``float`` has float32 kernels.
 
   python3 tool/make_test_models.py
 """
@@ -16,31 +17,10 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from gguf import F16, F32, Q8_0, GgufFile  # noqa: E402
+from pcwt import int8_per_channel, quantised, write  # noqa: E402
 
-OUT = Path(__file__).resolve().parent.parent / "test" / "models"
-rng = np.random.default_rng(20261117)
-
-
-def w(*shape: int, scale: float = 0.5) -> np.ndarray:
-    return (rng.standard_normal(shape) * scale).astype(np.float32)
-
-
-def model(name: str, graph: str) -> GgufFile:
-    f = GgufFile()
-    f.metadata.update(
-        {
-            "general.architecture": "rayo",
-            "general.name": name,
-            "rayo.format_version": 1,
-            "rayo.graph": graph,
-            "test.labels": ["a", "b"],
-            "test.count": 3,
-            "test.ratio": 0.5,
-            "test.flag": True,
-        }
-    )
-    return f
+OUT = Path(__file__).resolve().parent.parent / "tests" / "models"
+T_MAX = 12
 
 
 def softmax(x: np.ndarray) -> np.ndarray:
@@ -48,158 +28,121 @@ def softmax(x: np.ndarray) -> np.ndarray:
     return e / e.sum(axis=-1, keepdims=True)
 
 
-def gelu_erf(x: np.ndarray) -> np.ndarray:
-    from math import erf
-
-    return 0.5 * x * (1 + np.vectorize(erf)(x / np.sqrt(2)))
-
-
-def layer_norm(x: np.ndarray, g: np.ndarray, b: np.ndarray, eps: float = 1e-5) -> np.ndarray:
-    mu = x.mean(axis=-1, keepdims=True)
-    var = ((x - mu) ** 2).mean(axis=-1, keepdims=True)
-    return (x - mu) / np.sqrt(var + eps) * g + b
-
-
-OPS_GRAPH = """\
-input ids i32 T
-input x f32 8 T
-e = get_rows emb ids
-m = mask_pos ids
-h = concat e x dim=0
-c = conv1d h conv.w conv.b k=3 d=2 act=relu
-d = dense c dense.w dense.b act=gelu_erf
-r = add d e
-n = layer_norm r ln.g ln.b eps=0.00001
-q = dense n wide.w
-pm = masked_max n m empty=-7
-pa = masked_mean n m
-sm = softmax n
-last = cols n start=T-1 len=1
-s = scale last s=2
-output conv c
-output norm n
-output wide q
-output max pm
-output mean pa
-output softmax sm
-output last s
-"""
+def conv(x, k, b, size, dil, quant):
+    """Same-padded conv1d; k is [out, 1, size, in] (real values)."""
+    t = x.shape[0]
+    x = x.astype(np.float64).copy()
+    if quant:
+        for p in range(dil):
+            x[p::dil] = quantised(x[p::dil])
+    pad = dil * (size - 1) // 2
+    xp = np.pad(x, ((pad, pad), (0, 0)))
+    y = sum(xp[j * dil: j * dil + t] @ k[:, 0, j, :].T.astype(np.float64) for j in range(size))
+    return np.maximum(y + b, 0)
 
 
-def ops() -> dict:
-    f = model("ops", OPS_GRAPH)
-    emb, conv_w, conv_b = w(10, 8), w(8, 3 * 16), w(8)
-    dense_w, dense_b, ln_g, ln_b, q8_w = w(8, 8), w(8), w(8) + 1, w(8), w(32, 8)
-    f.add("emb", emb, F16)
-    f.add("conv.w", conv_w, F32)
-    f.add("conv.b", conv_b)
-    f.add("dense.w", dense_w, F16)
-    f.add("dense.b", dense_b)
-    f.add("ln.g", ln_g)
-    f.add("ln.b", ln_b)
-    f.add("wide.w", q8_w, F32)
-    emb = f.tensors["emb"].values()
-    dense_w = f.tensors["dense.w"].values()
-
-    cases = []
-    for ids in ([3, 1, 4, 1, 5, 9, 2, 0, 0], [7], [0, 0, 0]):
-        t = len(ids)
-        x = w(t, 8)
-        e = emb[ids]
-        mask = np.array(ids) > 0
-        h = np.concatenate([e, x], axis=1)
-        k = conv_w.reshape(8, 3, 16)
-        hp = np.pad(h, ((2, 2), (0, 0)))
-        c = np.maximum(sum(hp[j * 2 : j * 2 + t] @ k[:, j, :].T for j in range(3)) + conv_b, 0)
-        d = gelu_erf(c @ dense_w.T + dense_b)
-        n = layer_norm(d + e, ln_g, ln_b)
-        cases.append(
-            {
-                "ids": ids,
-                "x": x.ravel().tolist(),
-                "conv": c.ravel().tolist(),
-                "norm": n.ravel().tolist(),
-                "wide": (n @ q8_w.T).ravel().tolist(),
-                "max": (n[mask].max(axis=0) if mask.any() else np.full(8, -7.0)).tolist(),
-                "mean": (n[mask].mean(axis=0) if mask.any() else np.zeros(8)).tolist(),
-                "softmax": softmax(n).ravel().tolist(),
-                "last": (2 * n[-1]).tolist(),
-            }
-        )
-    f.write(OUT / "ops.gguf")
-    return {"cases": cases}
+def dense(x, k, b, quant, relu):
+    rows = np.atleast_2d(x).astype(np.float64)
+    if quant:
+        rows = np.stack([quantised(r) for r in rows])
+    y = rows @ k.T.astype(np.float64) + b
+    y = np.maximum(y, 0) if relu else y
+    return y.reshape(*x.shape[:-1], -1)
 
 
-Q8_GRAPH = """\
-input x f32 64 T
-y = dense x w b
-output y y
-"""
+def reader(rng: np.random.Generator) -> dict:
+    def w(*shape, s=0.4):
+        return (rng.standard_normal(shape) * s).astype(np.float32)
 
-
-def q8() -> dict:
-    f = model("q8", Q8_GRAPH)
-    f.add("w", w(16, 64), Q8_0)
-    f.add("b", w(16))
-    x = w(5, 64)
-    y = x @ f.tensors["w"].values().T + f.tensors["b"].values()
-    f.write(OUT / "q8.gguf")
-    return {"x": x.ravel().tolist(), "y": y.ravel().tolist()}
-
-
-DECODER_GRAPH = """\
-# A one-layer causal transformer with a key/value cache: T new tokens at positions P..P+T-1.
-input tokens i32 T
-state kc f32 16 12
-state vc f32 16 12
-pos = range start=P len=T
-e = get_rows emb tokens
-pe = get_rows pos_emb pos
-h = add e pe
-hn = layer_norm h ln.g ln.b
-q = dense hn wq bq
-k = dense hn wk bk
-v = dense hn wv bv
-ks = write kc k at=P
-vs = write vc v at=P
-a = attention q ks vs heads=2 causal=1
-o = dense a wo bo
-y = add h o
-logits = dense y wout
-output logits logits
-"""
-
-
-def decoder() -> dict:
-    f = model("decoder", DECODER_GRAPH)
-    p = {
-        "emb": w(20, 16), "pos_emb": w(12, 16), "ln.g": w(16) + 1, "ln.b": w(16),
-        "wq": w(16, 16), "bq": w(16), "wk": w(16, 16), "bk": w(16), "wv": w(16, 16),
-        "bv": w(16), "wo": w(16, 16), "bo": w(16), "wout": w(20, 16),
+    tok_real = w(20, 6)
+    tok_q, tok_s = int8_per_channel(tok_real.reshape(-1, 1), 1)
+    tok_q, tok_s = tok_q.reshape(20, 6), tok_s[:1]
+    tok = tok_q.astype(np.float32) * tok_s[0]
+    shp = w(5, 2)
+    k1, k1s = int8_per_channel(w(8, 1, 3, 8))
+    k2, k2s = int8_per_channel(w(8, 1, 3, 8))
+    hk, hks = int8_per_channel(w(5, 16))
+    ok = w(3, 5)
+    ik, iks = int8_per_channel(w(4, 16))
+    b1, b2, hb, ob, ib = w(8), w(8), w(5), w(3), w(4)
+    tensors = {
+        "tok": (tok_q, tok_s, None), "shp": shp,
+        "c1.k": (k1, k1s, 0), "c1.b": b1, "c2.k": (k2, k2s, 0), "c2.b": b2,
+        "h.k": (hk, hks, 0), "h.b": hb, "o.k": ok, "o.b": ob, "i.k": (ik, iks, 0), "i.b": ib,
     }
-    for name, value in p.items():
-        f.add(name, value)
-    tokens = [5, 2, 17, 9, 0, 11]
-    t = len(tokens)
-    h = p["emb"][tokens] + p["pos_emb"][:t]
-    hn = layer_norm(h, p["ln.g"], p["ln.b"])
-    q, k, v = (hn @ p[a].T + p[b] for a, b in (("wq", "bq"), ("wk", "bk"), ("wv", "bv")))
-    heads, hd = 2, 8
-    out = np.zeros_like(q)
-    for i in range(heads):
-        sl = slice(i * hd, (i + 1) * hd)
-        s = q[:, sl] @ k[:, sl].T / np.sqrt(hd)
-        s = np.where(np.tril(np.ones((t, t))) > 0, s, -np.inf)
-        out[:, sl] = softmax(s) @ v[:, sl]
-    y = h + out @ p["wo"].T + p["bo"]
-    logits = y @ p["wout"].T
-    f.write(OUT / "decoder.gguf")
-    return {"tokens": tokens, "logits": logits.ravel().tolist()}
+    nodes = [
+        {"op": "gather", "inputs": ["tok", "tokens"], "output": "te"},
+        {"op": "gather", "inputs": ["shp", "shapes"], "output": "se"},
+        {"op": "concat", "inputs": ["te", "se"], "output": "emb"},
+        {"op": "mask", "inputs": ["shapes"], "output": "m"},
+        {"op": "conv1d", "inputs": ["emb", "c1.k", "c1.b"], "output": "c1", "size": 3,
+         "dilation": 1, "activation": "relu", "input_quantization": "tensor_phases"},
+        {"op": "conv1d", "inputs": ["c1", "c2.k", "c2.b"], "output": "c2", "size": 3,
+         "dilation": 2, "activation": "relu"},
+        {"op": "add", "inputs": ["c1", "c2"], "output": "x"},
+        {"op": "concat", "inputs": ["x", "emb"], "output": "xe"},
+        {"op": "dense", "inputs": ["xe", "h.k", "h.b"], "output": "h", "activation": "relu",
+         "input_quantization": "rows"},
+        {"op": "dense", "inputs": ["h", "o.k", "o.b"], "output": "ol"},
+        {"op": "softmax", "inputs": ["ol"], "output": "slots"},
+        {"op": "masked_max", "inputs": ["x", "m"], "output": "pmax", "fill": 10000},
+        {"op": "masked_mean", "inputs": ["x", "m"], "output": "pmean"},
+        {"op": "concat", "inputs": ["pmax", "pmean"], "output": "pooled"},
+        {"op": "dense", "inputs": ["pooled", "i.k", "i.b"], "output": "il"},
+        {"op": "softmax", "inputs": ["il"], "output": "intent"},
+    ]
+    graph = {"version": 1, "symbols": {"T": T_MAX},
+             "inputs": [{"name": "tokens", "dtype": "int32", "shape": ["T"]},
+                        {"name": "shapes", "dtype": "int32", "shape": ["T"]}],
+             "nodes": nodes,
+             "outputs": [{"name": "slots", "node": "slots"}, {"name": "intent", "node": "intent"}]}
+    (OUT / "reader.weights").write_bytes(
+        write("test-reader", tensors, graph, {"labels": ["a", "b", "c"], "count": 3}))
+    real = lambda q, s: q.astype(np.float32) * s.reshape(-1, *([1] * (q.ndim - 1)))  # noqa: E731
+    cases = []
+    for tokens, shapes in (([3, 7, 1, 19, 0, 0], [1, 2, 4, 1, 0, 0]),
+                           ([5] * T_MAX, [3] * T_MAX), ([0, 0], [0, 0]), ([4], [2])):
+        t, s = np.array(tokens), np.array(shapes)
+        m = (s > 0).astype(np.float64)[:, None]
+        emb = np.concatenate([tok[t], shp[s]], axis=1).astype(np.float64)
+        c1 = conv(emb, real(k1, k1s), b1, 3, 1, True)
+        x = c1 + conv(c1, real(k2, k2s), b2, 3, 2, True)
+        h = dense(np.concatenate([x, emb], axis=1), real(hk, hks), hb, True, True)
+        slots = softmax(dense(h, ok, ob, False, False))
+        n = max(m.sum(), 1.0)
+        pooled = np.concatenate([(x * m - (1 - m) * 1e4).max(axis=0), (x * m).sum(axis=0) / n])
+        intent = softmax(dense(pooled, real(ik, iks), ib, True, False))
+        cases.append({"T": len(tokens), "tokens": tokens, "shapes": shapes,
+                      "slots": slots.ravel().tolist(), "intent": intent.ravel().tolist()})
+    return {"file": "reader.weights", "cases": cases}
+
+
+def float_model(rng: np.random.Generator) -> dict:
+    def w(*shape, s=0.4):
+        return (rng.standard_normal(shape) * s).astype(np.float32)
+
+    emb, ck, cb, dk, db = w(9, 4), w(6, 1, 5, 4), w(6), w(2, 6), w(2)
+    tensors = {"emb": emb, "c.k": ck, "c.b": cb, "d.k": dk, "d.b": db}
+    nodes = [
+        {"op": "gather", "inputs": ["emb", "ids"], "output": "e"},
+        {"op": "conv1d", "inputs": ["e", "c.k", "c.b"], "output": "c", "size": 5, "dilation": 1,
+         "activation": "relu"},
+        {"op": "dense", "inputs": ["c", "d.k", "d.b"], "output": "y"},
+    ]
+    graph = {"version": 1, "symbols": {"N": 8},
+             "inputs": [{"name": "ids", "dtype": "int32", "shape": ["N"]}], "nodes": nodes,
+             "outputs": [{"name": "y", "node": "y"}]}
+    (OUT / "float.weights").write_bytes(write("test-float", tensors, graph))
+    ids = [1, 8, 2, 2, 0, 5, 7]
+    c = conv(emb[ids], ck, cb, 5, 1, False)
+    y = dense(c, dk, db, False, False)
+    return {"file": "float.weights", "cases": [{"N": len(ids), "ids": ids, "y": y.ravel().tolist()}]}
 
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    expected = {"ops": ops(), "q8": q8(), "decoder": decoder()}
+    rng = np.random.default_rng(20261117)
+    expected = {"reader": reader(rng), "float": float_model(rng)}
     (OUT / "expected.json").write_text(json.dumps(expected, indent=1) + "\n")
     print(f"wrote {OUT}")
 

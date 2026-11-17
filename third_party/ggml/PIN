@@ -1,4 +1,0 @@
-ggml (MIT), the CPU part only, vendored by tool/vendor_ggml.sh.
-repository: https://github.com/ggml-org/ggml.git
-tag: v1.0.0
-commit: 417a024b4fb6bc3116d41af7c067166a039bdf12
