@@ -56,6 +56,8 @@ jobs:
         run: tool/ci/test.sh ${{ matrix.cc }} -msse4.1
       - name: AVX2 build
         run: tool/ci/test.sh ${{ matrix.cc }} -mavx2 -mfma
+      - name: erf, every float in [0, 4]
+        run: tool/ci/erf.sh ${{ matrix.cc }}
 
   sanitizers:
     name: sanitizers
@@ -87,6 +89,8 @@ jobs:
         run: tool/ci/test.sh gcc
       - name: clang
         run: tool/ci/test.sh clang
+      - name: erf, every float in [0, 4]
+        run: tool/ci/erf.sh gcc
       - name: ASan, LSan and UBSan
         run: tool/ci/sanitize.sh gcc
 
@@ -126,6 +130,8 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: clang
         run: tool/ci/test.sh clang
+      - name: erf, every float in [0, 4]
+        run: tool/ci/erf.sh clang
 
   android:
     name: android

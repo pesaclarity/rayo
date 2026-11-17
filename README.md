@@ -142,9 +142,11 @@ Every C file, the tests' and tools' too, builds with gcc and clang as
   below 2^31 bytes (checked when a model loads and at every bind). SHA-256 counts its length in
   two 32-bit words.
 - C89 has no `snprintf`, `expf`, `sqrtf` or `erf`: `src/core/format.c` formats messages
-  (bounded), and `src/core/mathx.c` computes exp and sqrt in double and erf from fitted
-  polynomials (correctly rounded on every float in [-6, 6] but where pieces meet; glibc's
-  `erff` is one ulp off on 5% of them).
+  (bounded), and `src/core/mathx.c` computes exp and sqrt in double, and erf with fdlibm's
+  double erf (Sun's permissive licence, `LICENSES/fdlibm.txt`), rounded to float.
+  `tool/ci/erf.sh` checks it on every float in [0, 4] against the C library's erf rounded to
+  float: it is the same on all 1,082,130,433 of them, monotonic and odd (glibc's own `erff`
+  is one ulp off on 6% of them).
 
 ## Develop
 

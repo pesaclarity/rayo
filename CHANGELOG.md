@@ -4,6 +4,9 @@ Written from the conventional commit titles on `main` at each release.
 
 ## Unreleased
 
+- erf is fdlibm's (`LICENSES/fdlibm.txt`) in place of fitted polynomials, checked on every
+  float in [0, 4] against the C library's erf (`tool/ci/erf.sh`, in CI and `tool/check`).
+
 - rayo is C89 (ANSI C): every file builds with `-std=c89 -pedantic -Werror` and gcc and clang.
   Dimensions are 32-bit (`rayo_i32`) in the API; the fixed-size types are in
   `include/rayo/types.h`. erf, exp and sqrt come from `src/core/mathx.c`.
