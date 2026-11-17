@@ -20,5 +20,6 @@ if [ "$(uname -m)" = x86_64 ]; then
 else
   tool/ci/sanitize.sh cc
 fi
+tool/ci/erf.sh cc
 if [ -n "${ANDROID_NDK_HOME:-}" ]; then tool/ci/android.sh; fi
 tool/ci/dart.sh

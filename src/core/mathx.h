@@ -10,11 +10,9 @@ float rayo_expf(float x);
  * rounding it to float is too). */
 float rayo_sqrtf(float x);
 
-/* erf(x): piecewise polynomials fitted in double (error below 6e-15
- * against erf to 40 digits), rounded to float. On every float in
- * [-6, 6] it is the correctly rounded value, or within half an ulp of it
- * where the polynomials meet; it differs from glibc's erff (which is off by
- * one ulp on about 5% of inputs) only where glibc is the less accurate. */
+/* erf(x): fdlibm's double erf (Sun's permissive licence, as in FreeBSD and
+ * musl), rounded to float. tools/erf_check compares it with the C library's
+ * erf on every float in [0, 4]. */
 float rayo_erff(float x);
 
 /* The largest float, for maxima: -RAYO_FLT_BIG stands in for -infinity. */
