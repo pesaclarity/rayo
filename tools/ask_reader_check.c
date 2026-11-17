@@ -158,13 +158,14 @@ int main(int argc, char **argv) {
   /* Per op: the same loop as rayo_session_run, timed. */
   const rayo_graph *g = &model->graph;
   double *op_ms = calloc((size_t)g->node_count, sizeof *op_ms);
-  const rayo_exec exec = {&session->kernels, session->memory + session->plan.scratch_offset};
+  const rayo_exec exec = {&session->kernels, session->memory + session->plan.scratch_offset,
+                          session->symbols};
   for (int rep = 0; rep < repeats; rep++) {
     for (int32_t i = 0; i < g->node_count; i++) {
       rayo_tensor args[RAYO_MAX_INPUTS];
-      rayo_graph_node_inputs(g, &model->pcwt, i, session->inputs, session->nodes, args);
+      rayo_graph_node_inputs(g, &model->pcwt, i, &session->values, args);
       double a = now_ms();
-      g->nodes[i].op->run(g->nodes[i].params, args, &session->nodes[i], &exec);
+      g->nodes[i].op->run(g->nodes[i].params, args, &session->values.nodes[i], &exec);
       op_ms[i] += now_ms() - a;
     }
   }

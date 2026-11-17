@@ -9,13 +9,15 @@ writer) run on the phone, offline, in the Play and the F-Droid builds alike.
 - **Built from source**: a Dart build hook compiles `src/` with the platform's C compiler
   (the NDK, Xcode, clang/gcc). Nothing is downloaded, nothing is prebuilt, so F-Droid builds
   it offline like the rest of the app. No C++ anywhere.
-- **Small**: the Android library is about 52 KB (arm64-v8a), 41 KB (armeabi-v7a) and 53 KB
+- **Small**: the Android library is about 63 KB (arm64-v8a), 49 KB (armeabi-v7a) and 64 KB
   (x86_64), stripped.
 - **Memory planned once**: a session plans every activation into one arena when it is made
   (buffers whose lifetimes do not overlap share memory); a run allocates nothing.
 - **TFLite's numbers**: int8 layers run exactly as TFLite's dynamic-range kernels do, so a
   model exported from TFLite gives the same outputs (the Ask reader: every label, probabilities
-  within 4e-5).
+  within 4e-5; the Ask writer: every recorded reply).
+- **Decoders**: states kept across runs (a key/value cache) and size symbols bound per run, so
+  a transformer decodes word by word without recomputing the past.
 
 ## Use
 
@@ -76,7 +78,8 @@ src/kernels/      generic.c, x86.c (SSE4.1/AVX2), x86_vnni.c, neon.c, neon_dotpr
 src/model.c, src/session.c, src/sha256/
 lib/              the Dart API: bindings/, model.dart, session.dart, isolate_runner.dart, ...
 tests/            the C tests (tests/test_*.c) and test models
-tools/            ask_reader_check.c: a real model against TFLite's recorded outputs, timed
+tools/            ask_reader_check.c: the reader against TFLite's recorded outputs, timed;
+                  ask_writer_bench.c: the writer decoding the recorded replies, timed
 ```
 
 ## Kernels
@@ -105,7 +108,20 @@ with the same machine's TFLite (Python, `num_threads=1`) for comparison:
 | TFLite with XNNPACK | 0.08 ms |
 | TFLite built-in kernels | 0.28 ms |
 
-Loading the model takes about 0.2 ms and making a session about 0.15 ms. Memory: the file's
+The Ask writer (a 3-layer transformer, int8, word by word with a key/value cache), per reply of
+about 13 steps on the 172 recorded replies, the same machine:
+
+| | median |
+| --- | --- |
+| rayo, AVX-VNNI | 0.89 ms (0.07 ms a step) |
+| TFLite with XNNPACK, 1 thread (the whole 64 positions every step, as the app ran it) | 4.1 ms |
+| TFLite with XNNPACK, 2 threads | 6.9 ms |
+| TFLite built-in kernels | 39 ms |
+
+Every one of the 265 decodes the app's tests make matches the replies TFLite recorded, token
+for token, and the next-token choice agrees at every step.
+
+For the reader, loading the model takes about 0.2 ms and making a session about 0.15 ms. Memory: the file's
 copy (251 KB), the session's arena (241 KB) and 82 KB of tables. Measured with
 `tools/ask_reader_check.c`, which also prints the time per op. Not yet measured on a phone.
 

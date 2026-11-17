@@ -129,4 +129,31 @@ void main() {
     s.close();
     expect(s.run, throwsStateError);
   });
+
+  test('decodes token by token with a key/value cache', () {
+    final d = _expected['decoder']! as Map<String, Object?>;
+    final tokens = (d['tokens']! as List).cast<int>();
+    final want = [for (final row in d['logits']! as List) _floats(row)];
+    final m = RayoModel.load(_file('decoder.weights'));
+    final s = RayoSession(m);
+    addTearDown(() {
+      s.close();
+      m.close();
+    });
+    for (var round = 0; round < 2; round++) {
+      s.reset();
+      var past = 0;
+      for (final n in [2, 1, 1, 1, 1]) {
+        s
+          ..bind('P', past)
+          ..bind('T', n);
+        s.inputInt32(0).setAll(0, tokens.sublist(past, past + n));
+        s.run();
+        past += n;
+        expect(_worst(s.outputFloat32(0), want[past - 1]), lessThan(1e-5));
+      }
+    }
+    s.bind('P', tokens.length - 1);
+    expect(() => s.bind('T', 2), throwsA(isA<RayoException>()));
+  });
 }

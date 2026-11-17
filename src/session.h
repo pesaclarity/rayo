@@ -18,8 +18,8 @@ struct rayo_session {
   rayo_arena book;       /* owns the plan and the tensor tables */
   rayo_plan plan;
   int64_t symbols[RAYO_MAX_SYMBOLS];
-  rayo_tensor *inputs; /* current shapes; data in `memory` */
-  rayo_tensor *nodes;
+  rayo_values values; /* current shapes; data in `memory` */
+  size_t *planned;    /* each node's bytes as planned: no bind may exceed them */
 };
 
 #endif

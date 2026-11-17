@@ -139,10 +139,95 @@ def float_model(rng: np.random.Generator) -> dict:
     return {"file": "float.weights", "cases": [{"N": len(ids), "ids": ids, "y": y.ravel().tolist()}]}
 
 
+def decoder(rng: np.random.Generator) -> dict:
+    """A one-layer causal transformer with a key/value cache, int8 dense layers."""
+
+    def w(*shape, s=0.4):
+        return (rng.standard_normal(shape) * s).astype(np.float32)
+
+    vocab, dim, length, heads, ff = 11, 8, 6, 2, 16
+    q_names = ["q", "k", "v", "o", "f1", "f2", "out"]
+    shapes = {"q": (dim, dim), "k": (dim, dim), "v": (dim, dim), "o": (dim, dim),
+              "f1": (ff, dim), "f2": (dim, ff), "out": (vocab, dim)}
+    tok_q, tok_s = int8_per_channel(w(vocab, dim).reshape(-1, 1), 1)
+    tok_q, tok_s = tok_q.reshape(vocab, dim), tok_s[:1]
+    tensors: dict = {"tok": (tok_q, tok_s, None), "pos": w(length, dim)}
+    real: dict = {"tok": tok_q.astype(np.float32) * tok_s[0], "pos": tensors["pos"]}
+    for n in q_names:
+        q, sc = int8_per_channel(w(*shapes[n]))
+        tensors[n + ".k"] = (q, sc, 0)
+        real[n + ".k"] = q.astype(np.float32) * sc[:, None]
+        tensors[n + ".b"] = real[n + ".b"] = w(shapes[n][0])
+    for n in ("ln1", "ln2", "lnf"):
+        tensors[n + ".g"] = real[n + ".g"] = w(dim) + 1
+        tensors[n + ".b"] = real[n + ".b"] = w(dim)
+
+    def dense(x, n, act="none"):
+        return {"op": "dense", "inputs": [x, n + ".k", n + ".b"], "output": f"{n}_{x}",
+                "activation": act}
+
+    nodes = [
+        {"op": "range", "inputs": [], "output": "positions", "start": "P", "size": "T"},
+        {"op": "gather", "inputs": ["tok", "tokens"], "output": "te"},
+        {"op": "gather", "inputs": ["pos", "positions"], "output": "pe"},
+        {"op": "add", "inputs": ["te", "pe"], "output": "x"},
+        {"op": "layer_norm", "inputs": ["x", "ln1.g", "ln1.b"], "output": "a", "epsilon": 1e-5},
+        dense("a", "q"), dense("a", "k"), dense("a", "v"),
+        {"op": "cache_write", "inputs": ["kc", "k_a"], "output": "ks", "at": "P"},
+        {"op": "cache_write", "inputs": ["vc", "v_a"], "output": "vs", "at": "P"},
+        {"op": "attention", "inputs": ["q_a", "ks", "vs"], "output": "h", "heads": heads,
+         "causal": 1},
+        dense("h", "o"),
+        {"op": "add", "inputs": ["x", "o_h"], "output": "y"},
+        {"op": "layer_norm", "inputs": ["y", "ln2.g", "ln2.b"], "output": "b"},
+        dense("b", "f1", "gelu_erf"), dense("f1_b", "f2"),
+        {"op": "add", "inputs": ["y", "f2_f1_b"], "output": "z"},
+        {"op": "last_row", "inputs": ["z"], "output": "zl"},
+        {"op": "layer_norm", "inputs": ["zl", "lnf.g", "lnf.b"], "output": "zn"},
+        dense("zn", "out"),
+    ]
+    graph = {"version": 1, "symbols": {"T": length, "P": length - 1}, "plan": {"P": 0},
+             "inputs": [{"name": "tokens", "dtype": "int32", "shape": ["T"]}],
+             "states": [{"name": "kc", "dtype": "float32", "shape": [length, dim]},
+                        {"name": "vc", "dtype": "float32", "shape": [length, dim]}],
+             "nodes": nodes, "outputs": [{"name": "logits", "node": "out_zn"}]}
+    (OUT / "decoder.weights").write_bytes(write("test-decoder", tensors, graph))
+
+    from math import erf
+
+    def norm(x, n):
+        mu = x.mean(-1, keepdims=True)
+        var = ((x - mu) ** 2).mean(-1, keepdims=True)
+        return (x - mu) / np.sqrt(var + 1e-5) * real[n + ".g"] + real[n + ".b"]
+
+    def lin(x, n):
+        return np.stack([quantised(r) for r in np.atleast_2d(x)]) @ real[n + ".k"].T.astype(
+            np.float64) + real[n + ".b"]
+
+    gelu = np.vectorize(lambda v: 0.5 * v * (1 + erf(v / np.sqrt(2))))
+    tokens = [3, 9, 1, 0, 7, 10]
+    t = len(tokens)
+    x = real["tok"][tokens].astype(np.float64) + real["pos"][:t]
+    a = norm(x, "ln1")
+    q, k, v = lin(a, "q"), lin(a, "k"), lin(a, "v")
+    h = np.zeros_like(q)
+    hd = dim // heads
+    for j in range(heads):
+        sl = slice(j * hd, (j + 1) * hd)
+        sc = q[:, sl] @ k[:, sl].T / np.sqrt(hd)
+        sc = np.where(np.tril(np.ones((t, t))) > 0, sc, -np.inf)
+        e = np.exp(sc - sc.max(-1, keepdims=True))
+        h[:, sl] = (e / e.sum(-1, keepdims=True)) @ v[:, sl]
+    y = x + lin(h, "o")
+    z = y + lin(gelu(lin(norm(y, "ln2"), "f1")), "f2")
+    logits = lin(norm(z, "lnf"), "out")  # per position; rayo gives the last of each run
+    return {"file": "decoder.weights", "tokens": tokens, "logits": logits.tolist()}
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(20261117)
-    expected = {"reader": reader(rng), "float": float_model(rng)}
+    expected = {"reader": reader(rng), "float": float_model(rng), "decoder": decoder(rng)}
     (OUT / "expected.json").write_text(json.dumps(expected, indent=1) + "\n")
     print(f"wrote {OUT}")
 

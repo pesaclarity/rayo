@@ -99,11 +99,12 @@ void test_plan(void) {
   for (int32_t i = 0; i < g->node_count; i++) {
     for (int32_t j = i + 1; j < g->node_count; j++) {
       if (last[i] < j) continue; /* i is dead before j is made */
-      size_t ai = s->plan.node_offset[i], bi = ai + rayo_tensor_bytes(&s->nodes[i]);
-      size_t aj = s->plan.node_offset[j], bj = aj + rayo_tensor_bytes(&s->nodes[j]);
+      size_t ai = s->plan.node_offset[i], bi = ai + rayo_tensor_bytes(&s->values.nodes[i]);
+      size_t aj = s->plan.node_offset[j], bj = aj + rayo_tensor_bytes(&s->values.nodes[j]);
       EXPECT(bi <= aj || bj <= ai);
     }
-    EXPECT(s->plan.node_offset[i] + rayo_tensor_bytes(&s->nodes[i]) <= s->plan.scratch_offset);
+    EXPECT(s->plan.node_offset[i] + rayo_tensor_bytes(&s->values.nodes[i]) <=
+           s->plan.scratch_offset);
   }
   rayo_memory_info mem;
   rayo_session_memory(s, &mem);
@@ -211,5 +212,67 @@ void test_memory(void) {
   rayo_session_destroy(s);
   rayo_session_destroy(NULL);
   rayo_model_destroy(m);
+  free(file);
+}
+
+static int run_tokens(rayo_session *s, const int32_t *tokens, int64_t past, int64_t count) {
+  if (rayo_session_bind(s, "P", past, NULL) != RAYO_OK) return 0;
+  if (rayo_session_bind(s, "T", count, NULL) != RAYO_OK) return 0;
+  rayo_tensor_view v;
+  rayo_session_input(s, 0, &v);
+  memcpy(v.data, tokens + past, (size_t)count * sizeof(int32_t));
+  return rayo_session_run(s, NULL) == RAYO_OK;
+}
+
+/* A decoder with a key/value cache: the whole sequence at once, and token by
+ * token, give NumPy's logits; a run that does not fit the cache is refused;
+ * steps allocate nothing. */
+void test_decoder(void) {
+  size_t size, esize;
+  unsigned char *expected = model_file("expected.json", &esize);
+  unsigned char *file = model_file("decoder.weights", &size);
+  if (!expected || !file) {
+    EXPECT(0);
+    free(expected);
+    free(file);
+    return;
+  }
+  rayo_arena a = {0};
+  rayo_json *root;
+  EXPECT(rayo_json_parse((const char *)expected, esize, &a, &root, NULL) == RAYO_OK);
+  const rayo_json *spec = rayo_json_get(root, "decoder");
+  const rayo_json *toks = rayo_json_get(spec, "tokens");
+  const rayo_json *want = rayo_json_get(spec, "logits");
+  int32_t tokens[16];
+  const int64_t n = (int64_t)toks->length;
+  for (int64_t i = 0; i < n; i++) tokens[i] = (int32_t)toks->items[i]->number;
+  rayo_model *m;
+  rayo_session *s;
+  rayo_message msg;
+  EXPECT(rayo_model_create(file, size, &m, &msg) == RAYO_OK);
+  EXPECT(rayo_session_create(m, &s, &msg) == RAYO_OK);
+  for (int round = 0; round < 2; round++) {
+    /* All at once: the logits after the last token. */
+    rayo_session_reset(s);
+    EXPECT(run_tokens(s, tokens, 0, n));
+    EXPECT(compare(s, 0, want->items[n - 1]) < 1e-5);
+    /* Two tokens, then one at a time. */
+    rayo_session_reset(s);
+    EXPECT(run_tokens(s, tokens, 0, 2));
+    EXPECT(compare(s, 0, want->items[1]) < 1e-5);
+    long before = test_allocations();
+    for (int64_t p = 2; p < n; p++) {
+      EXPECT(run_tokens(s, tokens, p, 1));
+      EXPECT(compare(s, 0, want->items[p]) < 1e-5);
+    }
+    EXPECT(test_allocations() == before);
+  }
+  /* Past the cache's length. */
+  EXPECT(rayo_session_bind(s, "P", n - 1, NULL) == RAYO_OK);
+  EXPECT(rayo_session_bind(s, "T", 2, &msg) == RAYO_ERR_SHAPE);
+  rayo_session_destroy(s);
+  rayo_model_destroy(m);
+  rayo_arena_free(&a);
+  free(expected);
   free(file);
 }

@@ -15,8 +15,9 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
   return RAYO_OK;
 }
 
-static rayo_status infer(const void *params, const rayo_tensor *in, rayo_tensor *out,
-                         size_t *scratch, rayo_message *msg) {
+static rayo_status infer(const void *params, const rayo_tensor *in, const int64_t *symbols,
+                         rayo_tensor *out, size_t *scratch, rayo_message *msg) {
+  (void)symbols;
   (void)params;
   const rayo_shape *a = &in[0].shape, *b = &in[1].shape;
   bool ok = in[0].dtype == RAYO_DTYPE_F32 && in[1].dtype == RAYO_DTYPE_F32 && a->rank == b->rank &&
@@ -46,4 +47,4 @@ static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *o
   return RAYO_OK;
 }
 
-const rayo_op rayo_op_concat = {"concat", 2, 2, prepare, infer, run};
+const rayo_op rayo_op_concat = {"concat", 2, 2, prepare, infer, run, false};

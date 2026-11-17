@@ -23,8 +23,9 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
   return rayo_attr_float(spec, "fill", 1e4f, &p->fill, msg);
 }
 
-static rayo_status infer(const void *params, const rayo_tensor *in, rayo_tensor *out,
-                         size_t *scratch, rayo_message *msg) {
+static rayo_status infer(const void *params, const rayo_tensor *in, const int64_t *symbols,
+                         rayo_tensor *out, size_t *scratch, rayo_message *msg) {
+  (void)symbols;
   (void)params;
   if (in[0].dtype != RAYO_DTYPE_F32 || in[0].shape.rank != 2 || in[1].dtype != RAYO_DTYPE_F32 ||
       rayo_shape_count(&in[1].shape) != in[0].shape.dims[0]) {
@@ -73,5 +74,5 @@ static rayo_status mean_run(const void *params, const rayo_tensor *in, rayo_tens
   return RAYO_OK;
 }
 
-const rayo_op rayo_op_masked_max = {"masked_max", 2, 2, prepare, infer, max_run};
-const rayo_op rayo_op_masked_mean = {"masked_mean", 2, 2, prepare, infer, mean_run};
+const rayo_op rayo_op_masked_max = {"masked_max", 2, 2, prepare, infer, max_run, false};
+const rayo_op rayo_op_masked_mean = {"masked_mean", 2, 2, prepare, infer, mean_run, false};

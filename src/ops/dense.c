@@ -35,8 +35,9 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
   return s;
 }
 
-static rayo_status infer(const void *params, const rayo_tensor *in, rayo_tensor *out,
-                         size_t *scratch, rayo_message *msg) {
+static rayo_status infer(const void *params, const rayo_tensor *in, const int64_t *symbols,
+                         rayo_tensor *out, size_t *scratch, rayo_message *msg) {
+  (void)symbols;
   const rayo_linear *lin = params;
   const rayo_tensor *x = &in[0];
   if (x->dtype != RAYO_DTYPE_F32 || x->shape.rank < 1 || rayo_shape_inner(&x->shape) != lin->k) {
@@ -85,4 +86,4 @@ static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *o
   return RAYO_OK;
 }
 
-const rayo_op rayo_op_dense = {"dense", 2, 3, prepare, infer, run};
+const rayo_op rayo_op_dense = {"dense", 2, 3, prepare, infer, run, false};

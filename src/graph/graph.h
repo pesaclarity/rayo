@@ -15,11 +15,12 @@
 
 typedef enum rayo_ref_kind {
   RAYO_REF_INPUT,
+  RAYO_REF_STATE,
   RAYO_REF_WEIGHT,
   RAYO_REF_NODE,
 } rayo_ref_kind;
 
-/* What a node reads: graph input, weight or earlier node `index`. */
+/* What a node reads: graph input, state, weight or earlier node `index`. */
 typedef struct rayo_ref {
   rayo_ref_kind kind;
   int32_t index;
@@ -31,6 +32,8 @@ typedef struct rayo_dim {
   int32_t symbol;
 } rayo_dim;
 
+/* A graph input, or a state (a tensor kept across runs, such as a key/value
+ * cache: float32, whole-number dimensions, zeroed by rayo_session_reset). */
 typedef struct rayo_graph_input {
   const char *name;
   rayo_dtype dtype;
@@ -55,8 +58,14 @@ typedef struct rayo_graph {
   int32_t symbol_count;
   const char *symbols[RAYO_MAX_SYMBOLS];
   int64_t symbol_max[RAYO_MAX_SYMBOLS];
+  /* The values a session plans its memory for: each symbol's largest, unless
+   * the graph's "plan" says otherwise (when symbols trade off, as a cache's
+   * past P and new T with P + T at most its length). */
+  int64_t symbol_plan[RAYO_MAX_SYMBOLS];
   int32_t input_count;
   rayo_graph_input *inputs;
+  int32_t state_count;
+  rayo_graph_input *states;
   int32_t node_count;
   rayo_node *nodes;
   int32_t output_count;

@@ -31,8 +31,9 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
   return RAYO_OK;
 }
 
-static rayo_status infer(const void *params, const rayo_tensor *in, rayo_tensor *out,
-                         size_t *scratch, rayo_message *msg) {
+static rayo_status infer(const void *params, const rayo_tensor *in, const int64_t *symbols,
+                         rayo_tensor *out, size_t *scratch, rayo_message *msg) {
+  (void)symbols;
   const gather_params *p = params;
   if (in[1].dtype != RAYO_DTYPE_I32 || in[1].shape.rank != 1) {
     return rayo_fail(msg, RAYO_ERR_SHAPE, "gather: ids must be int32 [n]");
@@ -70,4 +71,4 @@ static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *o
   return RAYO_OK;
 }
 
-const rayo_op rayo_op_gather = {"gather", 2, 2, prepare, infer, run};
+const rayo_op rayo_op_gather = {"gather", 2, 2, prepare, infer, run, false};

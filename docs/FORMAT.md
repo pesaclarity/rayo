@@ -40,11 +40,18 @@ guessing.
 }
 ```
 
-- `symbols`: size symbols and the largest value of each. A session plans its memory for the
-  largest sizes once; the caller binds smaller ones before a run.
+- `symbols`: size symbols and the largest value of each. The caller binds each (0 to its
+  largest) before a run; an input may not come out empty.
+- `plan` (optional): the symbol values a session plans its memory for, each symbol's largest by
+  default. Set it when symbols trade off: a decoder's past `P` and new `T` add up to at most its
+  cache's length, so it plans with `P` 0 and `T` the length. A bind whose sizes would need more
+  memory than planned is refused.
 - `inputs`: `dtype` `int32` or `float32`; `shape` lists whole numbers or symbols.
-- `nodes`: run in order. `inputs` name graph inputs, earlier nodes' outputs, or tensors of the
-  file; the other fields are the op's attributes.
+- `states` (optional): float32 tensors with whole-number shapes that a session keeps across
+  runs, such as a key/value cache. `rayo_session_reset` zeroes them.
+- `nodes`: run in order. `inputs` name graph inputs, states, earlier nodes' outputs, or
+  tensors of the file; the other fields are the op's attributes. An attribute that is a size
+  may be a whole number or a symbol's name.
 - `outputs`: which nodes the caller reads, as float32.
 
 Shapes are row-major, outermost first: a sequence of `T` vectors of size `C` is `[T, C]`.
@@ -62,6 +69,14 @@ Shapes are row-major, outermost first: a sequence of `T` vectors of size `C` is 
 | `conv1d` | x `[T, C]`, kernel `[out, 1, size, C]` (TFLite's) or `[out, size, C]`, bias | `size`, `dilation` (default 1), `activation`, `input_quantization` | `[T, out]`, same padding: tap j of position t reads `t + (j - (size-1)/2) * dilation`, zeros outside |
 | `masked_max` | x `[T, C]`, mask `[T]` | `fill` (default 10000) | `[C]`: max over t of `x * m - (1 - m) * fill` |
 | `masked_mean` | x `[T, C]`, mask `[T]` | | `[C]`: sum over t of `x * m`, divided by max(sum of m, 1) |
+| `layer_norm` | x `[..., C]`, gamma `[C]`, beta `[C]` (float32) | `epsilon` (default 1e-5) | normalised over the innermost dimension, as TFLite computes Keras' LayerNormalization: `m = rsqrt(var + eps) * gamma`, `x * m + (beta - mean * m)` |
+| `range` | (none) | `start`, `size` (sizes) | int32 `[size]`: start, start + 1, ... |
+| `cache_write` | a state `[N, C]`, x `[T, C]` | `at` (a size) | writes x into the state's rows `at .. at+T-1` and gives rows `0 .. at+T-1` (a view of the state, no copy) |
+| `attention` | q `[T, D]`, k `[S, D]`, v `[S, D]` | `heads`, `causal` (0 or 1), `scale` (default `1/sqrt(D/heads)`) | `[T, D]`: per head, softmax(q · kᵀ · scale) · v; the T queries are at positions `S-T .. S-1`, and with `causal` each sees only keys at or before its own |
+| `last_row` | x `[T, C]` | | `[C]`: the last row |
+
+`activation` is `none` (default), `relu` or `gelu_erf` (`0.5 x (1 + erf(x / sqrt 2))`,
+Keras' gelu).
 
 ### int8 kernels
 
@@ -80,6 +95,26 @@ TFLite's numbers:
    activation.
 
 Positions outside the sequence count as float zeros (the zero point in int8).
+
+## A decoder
+
+The Ask writer's graph (pesaclarity-ml `akili.ask.writer_weights.rayo_graph`) decodes word by
+word with a key/value cache per layer:
+
+```json
+"symbols": {"T": 64, "P": 63}, "plan": {"P": 0},
+"inputs": [{"name": "tokens", "dtype": "int32", "shape": ["T"]}],
+"states": [{"name": "keys_0", "dtype": "float32", "shape": [64, 128]}, ...],
+"nodes": [
+  {"op": "range", "inputs": [], "output": "pos", "start": "P", "size": "T"},
+  ...
+  {"op": "cache_write", "inputs": ["keys_0", "k0"], "output": "ks0", "at": "P"},
+  {"op": "attention", "inputs": ["q0", "ks0", "vs0"], "output": "h0", "heads": 4, "causal": 1},
+  ...
+]
+```
+
+Reset, run the prompt with `P = 0, T = n`, then each new token with `T = 1` at `P = n, n+1, ...`.
 
 ## Versions
 

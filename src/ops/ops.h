@@ -5,6 +5,11 @@
 #include "ops/op.h"
 
 extern const rayo_op rayo_op_add;         /* ops/elementwise.c */
+extern const rayo_op rayo_op_attention;   /* ops/attention.c */
+extern const rayo_op rayo_op_cache_write; /* ops/sequence.c */
+extern const rayo_op rayo_op_last_row;    /* ops/sequence.c */
+extern const rayo_op rayo_op_layer_norm;  /* ops/layer_norm.c */
+extern const rayo_op rayo_op_range;       /* ops/sequence.c */
 extern const rayo_op rayo_op_mask;        /* ops/elementwise.c */
 extern const rayo_op rayo_op_concat;      /* ops/concat.c */
 extern const rayo_op rayo_op_conv1d;      /* ops/conv1d.c */

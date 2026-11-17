@@ -32,7 +32,9 @@ fi
 
 echo "== C: tools"
 # shellcheck disable=SC2086
-"$cc" "${warn[@]}" -O2 -Iinclude -Isrc $srcs tools/ask_reader_check.c -lm -o "$out/ask_reader_check"
+for t in ask_reader_check ask_writer_bench; do
+  "$cc" "${warn[@]}" -O2 -Iinclude -Isrc $srcs "tools/$t.c" -lm -o "$out/$t"
+done
 
 if command -v clang-format >/dev/null; then
   echo "== C: format"

@@ -14,8 +14,9 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
   return RAYO_OK;
 }
 
-static rayo_status infer(const void *params, const rayo_tensor *in, rayo_tensor *out,
-                         size_t *scratch, rayo_message *msg) {
+static rayo_status infer(const void *params, const rayo_tensor *in, const int64_t *symbols,
+                         rayo_tensor *out, size_t *scratch, rayo_message *msg) {
+  (void)symbols;
   (void)params;
   if (in[0].dtype != RAYO_DTYPE_F32 || in[0].shape.rank < 1) {
     return rayo_fail(msg, RAYO_ERR_SHAPE, "softmax: a float32 tensor");
@@ -49,4 +50,4 @@ static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *o
   return RAYO_OK;
 }
 
-const rayo_op rayo_op_softmax = {"softmax", 1, 1, prepare, infer, run};
+const rayo_op rayo_op_softmax = {"softmax", 1, 1, prepare, infer, run, false};

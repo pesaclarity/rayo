@@ -27,8 +27,22 @@ static rayo_status read_symbols(const rayo_json *json, rayo_graph *g, rayo_messa
     }
     g->symbols[i] = s->keys[i];
     g->symbol_max[i] = max;
+    g->symbol_plan[i] = max;
   }
   g->symbol_count = (int32_t)s->length;
+  const rayo_json *plan = rayo_json_get(json, "plan");
+  if (!plan) return RAYO_OK;
+  if (plan->kind != RAYO_JSON_OBJECT) {
+    return rayo_fail(msg, RAYO_ERR_FORMAT, "graph plan: an object of symbol values");
+  }
+  for (size_t i = 0; i < plan->length; i++) {
+    int32_t k = rayo_graph_symbol(g, plan->keys[i]);
+    int64_t v;
+    if (k < 0 || !rayo_json_as_int(plan->items[i], &v) || v < 0 || v > g->symbol_max[k]) {
+      return rayo_fail(msg, RAYO_ERR_FORMAT, "graph plan: %s", plan->keys[i]);
+    }
+    g->symbol_plan[k] = v;
+  }
   return RAYO_OK;
 }
 
@@ -43,20 +57,26 @@ static rayo_status read_dtype(const char *s, rayo_dtype *out) {
   return RAYO_OK;
 }
 
-static rayo_status read_input(const rayo_json *j, rayo_graph *g, rayo_graph_input *in,
+static rayo_status read_input(const rayo_json *j, rayo_graph *g, rayo_graph_input *in, bool state,
                               rayo_message *msg) {
   in->name = rayo_json_as_string(rayo_json_get(j, "name"));
   const rayo_json *shape = rayo_json_get(j, "shape");
   if (!in->name ||
       read_dtype(rayo_json_as_string(rayo_json_get(j, "dtype")), &in->dtype) != RAYO_OK || !shape ||
       shape->kind != RAYO_JSON_ARRAY || shape->length > RAYO_MAX_RANK) {
-    return rayo_fail(msg, RAYO_ERR_FORMAT, "a graph input needs a name, a dtype and a shape");
+    return rayo_fail(msg, RAYO_ERR_FORMAT,
+                     "a graph input or state needs a name, a dtype and a shape");
+  }
+  if (state && in->dtype != RAYO_DTYPE_F32) {
+    return rayo_fail(msg, RAYO_ERR_UNSUPPORTED, "state %s: only float32", in->name);
   }
   in->rank = (int32_t)shape->length;
   for (size_t i = 0; i < shape->length; i++) {
     const char *sym = rayo_json_as_string(shape->items[i]);
     rayo_dim *d = &in->dims[i];
-    if (sym) {
+    if (sym && state) {
+      return rayo_fail(msg, RAYO_ERR_FORMAT, "state %s: sizes must be whole numbers", in->name);
+    } else if (sym) {
       d->symbol = rayo_graph_symbol(g, sym);
       if (d->symbol < 0)
         return rayo_fail(msg, RAYO_ERR_FORMAT, "input %s: no symbol %s", in->name, sym);
@@ -70,8 +90,8 @@ static rayo_status read_input(const rayo_json *j, rayo_graph *g, rayo_graph_inpu
   return RAYO_OK;
 }
 
-/* A name in scope before node `upto`: an input, an earlier node, else a
- * weight. Later definitions shadow earlier ones. */
+/* A name in scope before node `upto`: an earlier node, an input, a state,
+ * else a weight. Later definitions shadow earlier ones. */
 static bool resolve(const rayo_graph *g, int32_t upto, const rayo_pcwt *w, const char *name,
                     rayo_ref *ref) {
   for (int32_t i = upto - 1; i >= 0; i--) {
@@ -86,6 +106,12 @@ static bool resolve(const rayo_graph *g, int32_t upto, const rayo_pcwt *w, const
       return true;
     }
   }
+  for (int32_t i = 0; i < g->state_count; i++) {
+    if (strcmp(g->states[i].name, name) == 0) {
+      *ref = (rayo_ref){RAYO_REF_STATE, i};
+      return true;
+    }
+  }
   for (size_t i = 0; i < w->weight_count; i++) {
     if (strcmp(w->weights[i].name, name) == 0) {
       *ref = (rayo_ref){RAYO_REF_WEIGHT, (int32_t)i};
@@ -93,6 +119,10 @@ static bool resolve(const rayo_graph *g, int32_t upto, const rayo_pcwt *w, const
     }
   }
   return false;
+}
+
+static int32_t symbol_of(const void *graph, const char *name) {
+  return rayo_graph_symbol(graph, name);
 }
 
 static rayo_status read_node(const rayo_json *j, rayo_graph *g, int32_t index, const rayo_pcwt *w,
@@ -123,9 +153,14 @@ static rayo_status read_node(const rayo_json *j, rayo_graph *g, int32_t index, c
     if (n->inputs[i].kind == RAYO_REF_WEIGHT) {
       const rayo_weight *wt = &w->weights[n->inputs[i].index];
       seen[i] = (rayo_tensor){wt->dtype, wt->shape, (void *)(uintptr_t)wt->data, wt};
+    } else if (n->inputs[i].kind == RAYO_REF_STATE) {
+      const rayo_graph_input *st = &g->states[n->inputs[i].index];
+      seen[i].dtype = st->dtype;
+      seen[i].shape.rank = st->rank;
+      for (int32_t d = 0; d < st->rank; d++) seen[i].shape.dims[d] = st->dims[d].value;
     }
   }
-  rayo_op_spec spec = {j, n->output, n->input_count, seen};
+  rayo_op_spec spec = {j, n->output, n->input_count, seen, symbol_of, g};
   return n->op->prepare(&spec, arena, &n->params, msg);
 }
 
@@ -175,8 +210,21 @@ rayo_status rayo_graph_read(const rayo_json *json, const rayo_pcwt *weights, ray
   if (!out->inputs || !out->nodes) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   out->input_count = (int32_t)inputs->length;
   for (size_t i = 0; i < inputs->length; i++) {
-    s = read_input(inputs->items[i], out, &out->inputs[i], msg);
+    s = read_input(inputs->items[i], out, &out->inputs[i], false, msg);
     if (s != RAYO_OK) return s;
+  }
+  const rayo_json *states = rayo_json_get(json, "states");
+  if (states) {
+    if (states->kind != RAYO_JSON_ARRAY || states->length > 256) {
+      return rayo_fail(msg, RAYO_ERR_FORMAT, "graph states: a list of at most 256");
+    }
+    out->states = rayo_arena_array(arena, states->length ? states->length : 1, sizeof *out->states);
+    if (!out->states) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
+    out->state_count = (int32_t)states->length;
+    for (size_t i = 0; i < states->length; i++) {
+      s = read_input(states->items[i], out, &out->states[i], true, msg);
+      if (s != RAYO_OK) return s;
+    }
   }
   for (size_t i = 0; i < nodes->length; i++) {
     out->node_count = (int32_t)i;

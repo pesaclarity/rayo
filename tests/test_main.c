@@ -14,6 +14,7 @@ void test_pcwt(void);
 void test_plan(void);
 void test_golden(void);
 void test_memory(void);
+void test_decoder(void);
 
 unsigned char *test_read_file(const char *path, size_t *size) {
   FILE *f = fopen(path, "rb");
@@ -49,6 +50,7 @@ static const struct {
     {"arena", test_arena},       {"json", test_json},       {"sha256", test_sha256},
     {"quantize", test_quantize}, {"kernels", test_kernels}, {"pcwt", test_pcwt},
     {"plan", test_plan},         {"golden", test_golden},   {"memory", test_memory},
+    {"decoder", test_decoder},
 };
 
 int main(int argc, char **argv) {

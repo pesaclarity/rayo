@@ -3,8 +3,10 @@
 #include "ops/ops.h"
 
 static const rayo_op *const all[] = {
-    &rayo_op_add,  &rayo_op_concat,     &rayo_op_conv1d,      &rayo_op_dense,   &rayo_op_gather,
-    &rayo_op_mask, &rayo_op_masked_max, &rayo_op_masked_mean, &rayo_op_softmax,
+    &rayo_op_add,         &rayo_op_attention, &rayo_op_cache_write, &rayo_op_last_row,
+    &rayo_op_layer_norm,  &rayo_op_range,     &rayo_op_concat,      &rayo_op_conv1d,
+    &rayo_op_dense,       &rayo_op_gather,    &rayo_op_mask,        &rayo_op_masked_max,
+    &rayo_op_masked_mean, &rayo_op_softmax,
 };
 
 const rayo_op *rayo_op_find(const char *name) {

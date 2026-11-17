@@ -89,6 +89,10 @@ class RayoSession {
     return v.data.cast<Float>().asTypedList(v.bytes ~/ 4);
   }
 
+  /// Zeroes the session's states, such as a decoder's key/value cache, to
+  /// start a new sequence.
+  void reset() => c.rayo_session_reset(_live);
+
   /// Runs the graph on this thread.
   void run() => check(c.rayo_session_run(_live, _msg), _msg);
 

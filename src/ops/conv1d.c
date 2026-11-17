@@ -64,8 +64,9 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
   return s;
 }
 
-static rayo_status infer(const void *params, const rayo_tensor *in, rayo_tensor *out,
-                         size_t *scratch, rayo_message *msg) {
+static rayo_status infer(const void *params, const rayo_tensor *in, const int64_t *symbols,
+                         rayo_tensor *out, size_t *scratch, rayo_message *msg) {
+  (void)symbols;
   const conv_params *p = params;
   const rayo_tensor *x = &in[0];
   if (x->dtype != RAYO_DTYPE_F32 || x->shape.rank != 2 || x->shape.dims[1] != p->channels) {
@@ -160,4 +161,4 @@ static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *o
   return run_f32(p, in[0].data, t, out->data, exec);
 }
 
-const rayo_op rayo_op_conv1d = {"conv1d", 2, 3, prepare, infer, run};
+const rayo_op rayo_op_conv1d = {"conv1d", 2, 3, prepare, infer, run, false};

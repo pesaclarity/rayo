@@ -16,8 +16,9 @@ static rayo_status no_params(const rayo_op_spec *spec, rayo_arena *arena, const 
   return RAYO_OK;
 }
 
-static rayo_status add_infer(const void *params, const rayo_tensor *in, rayo_tensor *out,
-                             size_t *scratch, rayo_message *msg) {
+static rayo_status add_infer(const void *params, const rayo_tensor *in, const int64_t *symbols,
+                             rayo_tensor *out, size_t *scratch, rayo_message *msg) {
+  (void)symbols;
   (void)params;
   if (in[0].dtype != RAYO_DTYPE_F32 || in[1].dtype != RAYO_DTYPE_F32 ||
       !rayo_shape_equal(&in[0].shape, &in[1].shape)) {
@@ -40,8 +41,9 @@ static rayo_status add_run(const void *params, const rayo_tensor *in, rayo_tenso
   return RAYO_OK;
 }
 
-static rayo_status mask_infer(const void *params, const rayo_tensor *in, rayo_tensor *out,
-                              size_t *scratch, rayo_message *msg) {
+static rayo_status mask_infer(const void *params, const rayo_tensor *in, const int64_t *symbols,
+                              rayo_tensor *out, size_t *scratch, rayo_message *msg) {
+  (void)symbols;
   (void)params;
   if (in[0].dtype != RAYO_DTYPE_I32) return rayo_fail(msg, RAYO_ERR_SHAPE, "mask: int32 ids");
   out->dtype = RAYO_DTYPE_F32;
@@ -61,5 +63,5 @@ static rayo_status mask_run(const void *params, const rayo_tensor *in, rayo_tens
   return RAYO_OK;
 }
 
-const rayo_op rayo_op_add = {"add", 2, 2, no_params, add_infer, add_run};
-const rayo_op rayo_op_mask = {"mask", 1, 1, no_params, mask_infer, mask_run};
+const rayo_op rayo_op_add = {"add", 2, 2, no_params, add_infer, add_run, false};
+const rayo_op rayo_op_mask = {"mask", 1, 1, no_params, mask_infer, mask_run, false};

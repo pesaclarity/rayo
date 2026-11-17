@@ -179,6 +179,9 @@ external int rayo_session_output(
   Pointer<RayoTensorView> out,
 );
 
+@Native<Void Function(Pointer<RayoSessionHandle>)>(isLeaf: true)
+external void rayo_session_reset(Pointer<RayoSessionHandle> session);
+
 @Native<Pointer<Uint8> Function(Pointer<RayoSessionHandle>)>(isLeaf: true)
 external Pointer<Uint8> rayo_session_kernels(
   Pointer<RayoSessionHandle> session,

@@ -1,5 +1,6 @@
 #include "ops/linear.h"
 
+#include <math.h>
 #include <string.h>
 
 #include "core/message.h"
@@ -69,33 +70,47 @@ rayo_status rayo_linear_pack(const rayo_op_spec *spec, const rayo_weight *kernel
   return RAYO_OK;
 }
 
+static inline float activate(rayo_activation act, float v) {
+  switch (act) {
+    case RAYO_ACT_RELU:
+      return v < 0.0f ? 0.0f : v;
+    case RAYO_ACT_GELU_ERF:
+      return 0.5f * v * (1.0f + erff(v * 0.70710678118654752f));
+    case RAYO_ACT_NONE:
+      break;
+  }
+  return v;
+}
+
 void rayo_linear_finish_i8(const rayo_linear *lin, const int32_t *restrict acc, size_t rows,
                            const float *restrict scale, const int32_t *restrict zero,
                            float *restrict y) {
   const size_t out = (size_t)lin->out;
   const int32_t *restrict rowsum = lin->rowsum;
   const float *restrict wscale = lin->wscale, *restrict bias = lin->bias;
-  const int relu = lin->act == RAYO_ACT_RELU;
+  const rayo_activation act = lin->act;
   for (size_t r = 0; r < rows; r++) {
     const int32_t *a = acc + r * out;
     float *yr = y + r * out;
     const float s = scale[r];
     const int32_t z = zero[r];
-    for (size_t o = 0; o < out; o++) {
-      float v = bias[o] + (float)(a[o] - z * rowsum[o]) * (s * wscale[o]);
-      yr[o] = relu && v < 0.0f ? 0.0f : v;
+    if (act == RAYO_ACT_RELU) {
+      for (size_t o = 0; o < out; o++) {
+        const float v = bias[o] + (float)(a[o] - z * rowsum[o]) * (s * wscale[o]);
+        yr[o] = v < 0.0f ? 0.0f : v;
+      }
+    } else {
+      for (size_t o = 0; o < out; o++) {
+        yr[o] = activate(act, bias[o] + (float)(a[o] - z * rowsum[o]) * (s * wscale[o]));
+      }
     }
   }
 }
 
 void rayo_linear_finish_f32(const rayo_linear *lin, float *restrict y, size_t rows) {
   const size_t out = (size_t)lin->out;
-  const int relu = lin->act == RAYO_ACT_RELU;
   for (size_t r = 0; r < rows; r++) {
     float *yr = y + r * out;
-    for (size_t o = 0; o < out; o++) {
-      float v = yr[o] + lin->bias[o];
-      yr[o] = relu && v < 0.0f ? 0.0f : v;
-    }
+    for (size_t o = 0; o < out; o++) yr[o] = activate(lin->act, yr[o] + lin->bias[o]);
   }
 }

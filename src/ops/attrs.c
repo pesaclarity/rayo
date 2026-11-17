@@ -54,8 +54,28 @@ rayo_status rayo_attr_activation(const rayo_op_spec *spec, rayo_activation *out,
     *out = RAYO_ACT_NONE;
   } else if (strcmp(s, "relu") == 0) {
     *out = RAYO_ACT_RELU;
+  } else if (strcmp(s, "gelu_erf") == 0) {
+    *out = RAYO_ACT_GELU_ERF;
   } else {
     return rayo_fail(msg, RAYO_ERR_UNSUPPORTED, "node %s: activation %s", spec->output, s);
   }
   return RAYO_OK;
+}
+
+rayo_status rayo_attr_size(const rayo_op_spec *spec, const char *key, int64_t fallback,
+                           rayo_size_attr *out, rayo_message *msg) {
+  const rayo_json *v = rayo_json_get(spec->json, key);
+  out->symbol = -1;
+  out->value = fallback;
+  if (!v) return RAYO_OK;
+  const char *name = rayo_json_as_string(v);
+  if (name) {
+    out->symbol = spec->symbol(spec->graph, name);
+    if (out->symbol < 0) {
+      return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: %s names no symbol %s", spec->output, key,
+                       name);
+    }
+    return RAYO_OK;
+  }
+  return rayo_attr_int(spec, key, fallback, 0, 1 << 24, &out->value, msg);
 }
