@@ -20,15 +20,19 @@
 
 typedef struct conv_params {
   rayo_linear lin;
-  int64_t size;
-  int64_t dilation;
-  int64_t channels;
+  size_t size;
+  size_t dilation;
+  size_t channels;
 } conv_params;
 
 static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const void **params,
                            rayo_message *msg) {
   const rayo_weight *kernel = spec->inputs[1].weight;
   const rayo_weight *bias = spec->input_count > 2 ? spec->inputs[2].weight : NULL;
+  conv_params *p;
+  rayo_i32 r, size, dilation;
+  const char *quant;
+  rayo_status s;
   if (!kernel || (spec->input_count > 2 && !bias) || spec->inputs[0].weight ||
       (kernel->shape.rank != 4 && kernel->shape.rank != 3) ||
       (kernel->shape.rank == 4 && kernel->shape.dims[1] != 1)) {
@@ -36,87 +40,97 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
                      "node %s: conv1d takes an input, an [out, 1, size, in] kernel and a bias",
                      spec->output);
   }
-  conv_params *p = rayo_arena_alloc(arena, sizeof *p);
+  p = rayo_arena_alloc(arena, sizeof *p);
   if (!p) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
-  const int32_t r = kernel->shape.rank;
-  int64_t size;
-  rayo_status s = rayo_attr_int(spec, "size", 0, 1, 64, &size, msg);
+  r = kernel->shape.rank;
+  s = rayo_attr_int(spec, "size", 0, 1, 64, &size, msg);
   if (s == RAYO_OK)
-    s = rayo_attr_int(spec, "dilation", 1, 1, RAYO_CONV_MAX_DILATION, &p->dilation, msg);
+    s = rayo_attr_int(spec, "dilation", 1, 1, RAYO_CONV_MAX_DILATION, &dilation, msg);
   if (s == RAYO_OK) s = rayo_attr_activation(spec, &p->lin.act, msg);
   if (s != RAYO_OK) return s;
-  if (size != kernel->shape.dims[r - 2] || (size - 1) * p->dilation % 2 != 0) {
-    return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: size %lld does not fit the kernel or centre",
-                     spec->output, (long long)size);
+  if (size != kernel->shape.dims[r - 2] || (size - 1) * dilation % 2 != 0) {
+    return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: size %ld does not fit the kernel or centre",
+                     spec->output, (long)size);
   }
-  const char *quant;
   s = rayo_attr_string(spec, "input_quantization", "tensor_phases", &quant, msg);
   if (s != RAYO_OK) return s;
   if (kernel->dtype == RAYO_DTYPE_I8 && strcmp(quant, "tensor_phases") != 0) {
     return rayo_fail(msg, RAYO_ERR_UNSUPPORTED, "node %s: input_quantization %s", spec->output,
                      quant);
   }
-  p->size = size;
-  p->channels = kernel->shape.dims[r - 1];
-  s = rayo_linear_pack(spec, kernel, kernel->shape.dims[0], size * p->channels, bias, arena,
-                       &p->lin, msg);
+  p->size = (size_t)size;
+  p->dilation = (size_t)dilation;
+  p->channels = (size_t)kernel->shape.dims[r - 1];
+  s = rayo_linear_pack(spec, kernel, (size_t)kernel->shape.dims[0], p->size * p->channels, bias,
+                       arena, &p->lin, msg);
   *params = p;
   return s;
 }
 
-static rayo_status infer(const void *params, const rayo_tensor *in, rayo_tensor *out,
-                         size_t *scratch, rayo_message *msg) {
+static rayo_status infer(const void *params, const rayo_tensor *in, const rayo_i32 *symbols,
+                         rayo_tensor *out, size_t *scratch, rayo_message *msg) {
   const conv_params *p = params;
   const rayo_tensor *x = &in[0];
-  if (x->dtype != RAYO_DTYPE_F32 || x->shape.rank != 2 || x->shape.dims[1] != p->channels) {
-    return rayo_fail(msg, RAYO_ERR_SHAPE, "conv1d: input must be float32 [T, %lld]",
-                     (long long)p->channels);
+  size_t t, c, kp, n;
+  (void)symbols;
+  if (x->dtype != RAYO_DTYPE_F32 || x->shape.rank != 2 || (size_t)x->shape.dims[1] != p->channels) {
+    return rayo_fail(msg, RAYO_ERR_SHAPE, "conv1d: input must be float32 [T, %lu]",
+                     (unsigned long)p->channels);
   }
-  const size_t t = (size_t)x->shape.dims[0], c = (size_t)p->channels;
-  const size_t kp = (size_t)p->lin.k_padded, n = (size_t)p->lin.out;
+  t = (size_t)x->shape.dims[0];
+  c = p->channels;
+  kp = p->lin.k_padded;
+  n = p->lin.out;
   out->dtype = RAYO_DTYPE_F32;
   out->shape.rank = 2;
   out->shape.dims[0] = x->shape.dims[0];
-  out->shape.dims[1] = p->lin.out;
+  out->shape.dims[1] = (rayo_i32)p->lin.out;
   *scratch = 0;
   if (p->lin.dtype == RAYO_DTYPE_I8) {
-    rayo_scratch_add(scratch, t * c);                   /* q */
-    rayo_scratch_add(scratch, t * kp);                  /* cols */
-    rayo_scratch_add(scratch, t * sizeof(float));       /* scale */
-    rayo_scratch_add(scratch, t * sizeof(int32_t));     /* zero */
-    rayo_scratch_add(scratch, t * n * sizeof(int32_t)); /* acc */
+    rayo_scratch_add(scratch, t * c);                    /* q */
+    rayo_scratch_add(scratch, t * kp);                   /* cols */
+    rayo_scratch_add(scratch, t * sizeof(float));        /* scale */
+    rayo_scratch_add(scratch, t * sizeof(rayo_i32));     /* zero */
+    rayo_scratch_add(scratch, t * n * sizeof(rayo_i32)); /* acc */
   } else {
     rayo_scratch_add(scratch, t * kp * sizeof(float)); /* cols */
   }
   return RAYO_OK;
 }
 
+/* The source position of tap j of position i, or -1 outside the sequence. */
+static long source(size_t i, size_t j, size_t d, size_t half, size_t t) {
+  const long src = (long)i + (long)(j * d) - (long)half;
+  return src < 0 || src >= (long)t ? -1 : src;
+}
+
 static rayo_status run_i8(const conv_params *p, const float *x, size_t t, float *y,
                           const rayo_exec *exec) {
+  const size_t c = p->channels, size = p->size, d = p->dilation;
+  const size_t kp = p->lin.k_padded, n = p->lin.out;
+  const size_t half = (size - 1) / 2 * d;
   unsigned char *at = exec->scratch;
-  const size_t c = (size_t)p->channels, size = (size_t)p->size, d = (size_t)p->dilation;
-  const size_t kp = (size_t)p->lin.k_padded, n = (size_t)p->lin.out;
-  const ptrdiff_t half = (ptrdiff_t)((size - 1) / 2 * d);
-  int8_t *q = rayo_scratch_take(&at, t * c);
-  int8_t *cols = rayo_scratch_take(&at, t * kp);
+  rayo_i8 *q = rayo_scratch_take(&at, t * c);
+  rayo_i8 *cols = rayo_scratch_take(&at, t * kp);
   float *scale = rayo_scratch_take(&at, t * sizeof(float));
-  int32_t *zero = rayo_scratch_take(&at, t * sizeof(int32_t));
-  int32_t *acc = rayo_scratch_take(&at, t * n * sizeof(int32_t));
-  for (size_t ph = 0; ph < d && ph < t; ph++) {
+  rayo_i32 *zero = rayo_scratch_take(&at, t * sizeof(rayo_i32));
+  rayo_i32 *acc = rayo_scratch_take(&at, t * n * sizeof(rayo_i32));
+  size_t ph, r, i, j;
+  for (ph = 0; ph < d && ph < t; ph++) {
     float s;
-    int32_t z;
+    rayo_i32 z;
     rayo_quantize_rows(x, c, ph, d, t, q, c, &s, &z);
-    for (size_t r = ph; r < t; r += d) {
+    for (r = ph; r < t; r += d) {
       scale[r] = s;
       zero[r] = z;
     }
   }
   if (exec->kernels->a_offset) rayo_offset_rows(q, c, t, c, zero, exec->kernels->a_offset);
-  for (size_t i = 0; i < t; i++) {
-    int8_t *row = cols + i * kp;
-    for (size_t j = 0; j < size; j++) {
-      const ptrdiff_t src = (ptrdiff_t)i + (ptrdiff_t)(j * d) - half;
-      if (src < 0 || src >= (ptrdiff_t)t) {
+  for (i = 0; i < t; i++) {
+    rayo_i8 *row = cols + i * kp;
+    for (j = 0; j < size; j++) {
+      const long src = source(i, j, d, half, t);
+      if (src < 0) {
         /* Zero in floats is the zero point in int8. */
         memset(row + j * c, (int)zero[i], c);
       } else {
@@ -131,16 +145,17 @@ static rayo_status run_i8(const conv_params *p, const float *x, size_t t, float 
 
 static rayo_status run_f32(const conv_params *p, const float *x, size_t t, float *y,
                            const rayo_exec *exec) {
+  const size_t c = p->channels, size = p->size, d = p->dilation;
+  const size_t k = p->lin.k, n = p->lin.out;
+  const size_t half = (size - 1) / 2 * d;
   unsigned char *at = exec->scratch;
-  const size_t c = (size_t)p->channels, size = (size_t)p->size, d = (size_t)p->dilation;
-  const size_t k = (size_t)p->lin.k, n = (size_t)p->lin.out;
-  const ptrdiff_t half = (ptrdiff_t)((size - 1) / 2 * d);
   float *cols = rayo_scratch_take(&at, t * k * sizeof(float));
-  for (size_t i = 0; i < t; i++) {
-    for (size_t j = 0; j < size; j++) {
-      const ptrdiff_t src = (ptrdiff_t)i + (ptrdiff_t)(j * d) - half;
+  size_t i, j;
+  for (i = 0; i < t; i++) {
+    for (j = 0; j < size; j++) {
+      const long src = source(i, j, d, half, t);
       float *to = cols + i * k + j * c;
-      if (src < 0 || src >= (ptrdiff_t)t) {
+      if (src < 0) {
         memset(to, 0, c * sizeof(float));
       } else {
         memcpy(to, x + (size_t)src * c, c * sizeof(float));
@@ -160,4 +175,4 @@ static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *o
   return run_f32(p, in[0].data, t, out->data, exec);
 }
 
-const rayo_op rayo_op_conv1d = {"conv1d", 2, 3, prepare, infer, run};
+const rayo_op rayo_op_conv1d = {"conv1d", 2, 3, prepare, infer, run, RAYO_FALSE};

@@ -2,8 +2,6 @@
 #ifndef RAYO_SESSION_H
 #define RAYO_SESSION_H
 
-#include <stdint.h>
-
 #include "rayo/error.h"
 #include "rayo/export.h"
 #include "rayo/model.h"
@@ -28,7 +26,7 @@ RAYO_API void rayo_session_destroy(rayo_session *session);
 
 /* Sets size symbol `name` (such as "T") to `value`, at most the largest the
  * graph declares, for the next runs. */
-RAYO_API rayo_status rayo_session_bind(rayo_session *session, const char *name, int64_t value,
+RAYO_API rayo_status rayo_session_bind(rayo_session *session, const char *name, rayo_i32 value,
                                        rayo_message *msg);
 
 /* Input `index`, at the current sizes, for the caller to write into. The
@@ -42,6 +40,10 @@ RAYO_API rayo_status rayo_session_run(rayo_session *session, rayo_message *msg);
  * belongs to the session and changes at the next run. */
 RAYO_API rayo_status rayo_session_output(const rayo_session *session, int index,
                                          rayo_tensor_view *out);
+
+/* Zeroes the session's states (such as a decoder's key/value cache), to
+ * start a new sequence. NULL is fine. */
+RAYO_API void rayo_session_reset(rayo_session *session);
 
 /* The kernels the session runs, such as "neon-dotprod" or "avx2". Static. */
 RAYO_API const char *rayo_session_kernels(const rayo_session *session);

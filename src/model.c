@@ -7,11 +7,12 @@
 #include "core/message.h"
 
 static rayo_status read_header(rayo_model *m, rayo_message *msg) {
+  const rayo_json *meta;
   rayo_status s = rayo_pcwt_read(m->file, m->file_size, &m->arena, &m->pcwt, msg);
   if (s != RAYO_OK) return s;
   s = rayo_graph_read(rayo_json_get(m->pcwt.header, "graph"), &m->pcwt, &m->arena, &m->graph, msg);
   if (s != RAYO_OK) return s;
-  const rayo_json *meta = rayo_json_get(m->pcwt.header, "metadata");
+  meta = rayo_json_get(m->pcwt.header, "metadata");
   if (meta && meta->kind != RAYO_JSON_OBJECT) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "the header's metadata is not an object");
   }
@@ -22,19 +23,22 @@ static rayo_status read_header(rayo_model *m, rayo_message *msg) {
 }
 
 rayo_status rayo_model_create(const void *data, size_t size, rayo_model **out, rayo_message *msg) {
+  rayo_model *m;
+  rayo_status s;
   if (!out || (!data && size)) return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "null argument");
   *out = NULL;
   if (size == 0) return rayo_fail(msg, RAYO_ERR_FORMAT, "an empty file");
-  rayo_model *m = calloc(1, sizeof *m);
+  m = calloc(1, sizeof *m);
   if (!m) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   m->file = rayo_aligned_alloc(size);
   if (!m->file) {
     free(m);
-    return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory for %zu bytes", size);
+    return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory for %lu bytes",
+                     (unsigned long)size);
   }
   memcpy(m->file, data, size);
   m->file_size = size;
-  rayo_status s = read_header(m, msg);
+  s = read_header(m, msg);
   if (s != RAYO_OK) {
     rayo_model_destroy(m);
     return s;
@@ -67,15 +71,17 @@ int rayo_model_output_count(const rayo_model *model) {
 }
 
 rayo_status rayo_model_input_info(const rayo_model *model, int index, rayo_tensor_view *out) {
+  const rayo_graph_input *in;
+  rayo_i32 d;
   if (!model || !out || index < 0 || index >= model->graph.input_count) {
     return RAYO_ERR_INVALID_ARGUMENT;
   }
-  const rayo_graph_input *in = &model->graph.inputs[index];
+  in = &model->graph.inputs[index];
   memset(out, 0, sizeof *out);
   out->name = in->name;
   out->dtype = in->dtype;
   out->shape.rank = in->rank;
-  for (int32_t d = 0; d < in->rank; d++) {
+  for (d = 0; d < in->rank; d++) {
     const rayo_dim dim = in->dims[d];
     out->shape.dims[d] = dim.symbol >= 0 ? model->graph.symbol_max[dim.symbol] : dim.value;
   }

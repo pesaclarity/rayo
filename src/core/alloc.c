@@ -1,30 +1,37 @@
 #include "core/alloc.h"
 
-#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "core/compat.h"
+
 size_t rayo_align_up(size_t size) {
-  if (size > SIZE_MAX - (RAYO_ALIGN - 1)) return 0;
+  if (size > RAYO_SIZE_MAX - (RAYO_ALIGN - 1)) return 0;
   return (size + RAYO_ALIGN - 1) & ~(size_t)(RAYO_ALIGN - 1);
+}
+
+void *rayo_align_pointer(void *p, size_t align) {
+  unsigned char *b = (unsigned char *)p;
+  size_t off = (size_t)b % align; /* a pointer's address, as C89 allows */
+  return off ? b + (align - off) : b;
 }
 
 /* malloc'd block: [padding][original pointer][aligned data...] */
 void *rayo_aligned_alloc(size_t size) {
-  if (size == 0 || size > SIZE_MAX - RAYO_ALIGN - sizeof(void *)) return NULL;
-  unsigned char *raw = malloc(size + RAYO_ALIGN + sizeof(void *));
+  unsigned char *raw;
+  unsigned char *p;
+  if (size == 0 || size > RAYO_SIZE_MAX - RAYO_ALIGN - sizeof(void *)) return NULL;
+  raw = (unsigned char *)malloc(size + RAYO_ALIGN + sizeof(void *));
   if (!raw) return NULL;
-  uintptr_t start = (uintptr_t)(raw + sizeof(void *));
-  uintptr_t aligned = (start + RAYO_ALIGN - 1) & ~(uintptr_t)(RAYO_ALIGN - 1);
-  unsigned char *p = (unsigned char *)aligned;
+  p = (unsigned char *)rayo_align_pointer(raw + sizeof(void *), RAYO_ALIGN);
   memcpy(p - sizeof(void *), &raw, sizeof raw);
   memset(p, 0, size);
   return p;
 }
 
 void rayo_aligned_free(void *p) {
-  if (!p) return;
   void *raw;
+  if (!p) return;
   memcpy(&raw, (unsigned char *)p - sizeof(void *), sizeof raw);
   free(raw);
 }

@@ -2,24 +2,29 @@
 
 #include "kernels/kernels.h"
 
-/* std::round (halves away from zero), exactly, without a libm call: a float
- * plus or minus 0.5 is exact in double, and truncation does the rest. */
-static inline int32_t round_half_away(float v) {
+/* std::round (halves away from zero), exactly: a float plus or minus 0.5 is
+ * exact in double, and truncation does the rest. */
+static rayo_i32 round_half_away(float v) {
   const double d = (double)v;
-  return (int32_t)(d >= 0.0 ? d + 0.5 : d - 0.5);
+  return (rayo_i32)(d >= 0.0 ? d + 0.5 : d - 0.5);
 }
 
-void rayo_quantize_rows(const float *restrict x, size_t width, size_t first, size_t step,
-                        size_t rows, int8_t *restrict q, size_t ldq, float *scale,
-                        int32_t *zero_point) {
-  /* Eight independent lanes, so the compiler can use SIMD min and max;
-   * min and max do not depend on the order. */
-  float lo8[8] = {0}, hi8[8] = {0};
-  for (size_t r = first; r < rows; r += step) {
+/* The same for a double that is not near the int32 limits. */
+static rayo_i32 round_double(double d) {
+  return (rayo_i32)(d >= 0.0 ? floor(d + 0.5) : ceil(d - 0.5));
+}
+
+static void range_of(const float *RAYO_RESTRICT x, size_t width, size_t first, size_t step,
+                     size_t rows, float *lo_out, float *hi_out) {
+  /* Eight independent lanes, so the compiler can use SIMD min and max; min
+   * and max do not depend on the order. */
+  float lo8[8], hi8[8], lo = 0.0f, hi = 0.0f;
+  size_t r, i, l;
+  for (l = 0; l < 8; l++) lo8[l] = hi8[l] = 0.0f;
+  for (r = first; r < rows; r += step) {
     const float *row = x + r * width;
-    size_t i = 0;
-    for (; i + 8 <= width; i += 8) {
-      for (size_t l = 0; l < 8; l++) {
+    for (i = 0; i + 8 <= width; i += 8) {
+      for (l = 0; l < 8; l++) {
         lo8[l] = row[i + l] < lo8[l] ? row[i + l] : lo8[l];
         hi8[l] = row[i + l] > hi8[l] ? row[i + l] : hi8[l];
       }
@@ -29,56 +34,72 @@ void rayo_quantize_rows(const float *restrict x, size_t width, size_t first, siz
       hi8[0] = row[i] > hi8[0] ? row[i] : hi8[0];
     }
   }
-  float lo = 0.0f, hi = 0.0f;
-  for (size_t l = 0; l < 8; l++) {
+  for (l = 0; l < 8; l++) {
     lo = lo8[l] < lo ? lo8[l] : lo;
     hi = hi8[l] > hi ? hi8[l] : hi;
   }
-  if (lo == hi) {
-    for (size_t r = first; r < rows; r += step) {
-      for (size_t i = 0; i < width; i++) q[r * ldq + i] = 0;
+  *lo_out = lo;
+  *hi_out = hi;
+}
+
+void rayo_quantize_rows(const float *RAYO_RESTRICT x, size_t width, size_t first, size_t step,
+                        size_t rows, rayo_i8 *RAYO_RESTRICT q, size_t ldq, float *scale,
+                        rayo_i32 *zero_point) {
+  float lo, hi, sf, inv;
+  double s, zp_from_min, zp_from_max, err_min, err_max, zp_d;
+  rayo_i32 zp;
+  size_t r, i;
+  range_of(x, width, first, step, rows, &lo, &hi);
+  /* A NaN or infinity (only a damaged model makes one) quantises to zeros,
+   * as no value is: converting it to an integer would be undefined. */
+  if (lo == hi || !(hi - lo <= 3.0e38f)) {
+    for (r = first; r < rows; r += step) {
+      for (i = 0; i < width; i++) q[r * ldq + i] = 0;
     }
     *scale = 1.0f;
     *zero_point = 0;
     return;
   }
   /* As TFLite: the scale and zero point in double, then the scale as float. */
-  const double s = ((double)hi - (double)lo) / 255.0;
-  const double zp_from_min = -128.0 - lo / s;
-  const double zp_from_max = 127.0 - hi / s;
-  const double err_min = 128.0 + fabs(lo / s);
-  const double err_max = 127.0 + fabs(hi / s);
-  const double zp_d = err_min < err_max ? zp_from_min : zp_from_max;
-  int32_t zp;
+  s = ((double)hi - (double)lo) / 255.0;
+  zp_from_min = -128.0 - lo / s;
+  zp_from_max = 127.0 - hi / s;
+  err_min = 128.0 + fabs(lo / s);
+  err_max = 127.0 + fabs(hi / s);
+  zp_d = err_min < err_max ? zp_from_min : zp_from_max;
   if (zp_d <= -128.0) {
     zp = -128;
   } else if (zp_d >= 127.0) {
     zp = 127;
   } else {
-    zp = (int32_t)lround(zp_d);
+    zp = round_double(zp_d);
   }
-  const float sf = (float)s;
-  const float inv = 1.0f / sf;
-  for (size_t r = first; r < rows; r += step) {
+  sf = (float)s;
+  inv = 1.0f / sf;
+  for (r = first; r < rows; r += step) {
     const float *row = x + r * width;
-    int8_t *out = q + r * ldq;
-    for (size_t i = 0; i < width; i++) {
+    rayo_i8 *out = q + r * ldq;
+    for (i = 0; i < width; i++) {
       float v = (float)zp + row[i] * inv;
-      v = v < -128.5f ? -128.5f : (v > 127.5f ? 127.5f : v);
-      int32_t iv = round_half_away(v);
+      rayo_i32 iv;
+      /* Written so that a NaN clamps too. */
+      v = v >= -128.5f ? v : -128.5f;
+      v = v <= 127.5f ? v : 127.5f;
+      iv = round_half_away(v);
       iv = iv < -128 ? -128 : (iv > 127 ? 127 : iv);
-      out[i] = (int8_t)iv;
+      out[i] = (rayo_i8)iv;
     }
   }
   *scale = sf;
   *zero_point = zp;
 }
 
-void rayo_offset_rows(int8_t *restrict q, size_t ldq, size_t rows, size_t width,
-                      int32_t *restrict zero, int32_t offset) {
-  uint8_t *u = (uint8_t *)(void *)q;
-  for (size_t r = 0; r < rows; r++) {
-    for (size_t i = 0; i < width; i++) u[r * ldq + i] ^= 0x80u;
+void rayo_offset_rows(rayo_i8 *RAYO_RESTRICT q, size_t ldq, size_t rows, size_t width,
+                      rayo_i32 *RAYO_RESTRICT zero, rayo_i32 offset) {
+  rayo_u8 *u = (rayo_u8 *)(void *)q;
+  size_t r, i;
+  for (r = 0; r < rows; r++) {
+    for (i = 0; i < width; i++) u[r * ldq + i] ^= 0x80u;
     zero[r] += offset;
   }
 }

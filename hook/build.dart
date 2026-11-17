@@ -1,6 +1,6 @@
 // Compiles rayo's C sources (src/) into one shared library for whatever
 // target Dart or Flutter is building: Android (arm64-v8a, armeabi-v7a,
-// x86_64), iOS, macOS and Linux. Plain C11, no other library, nothing
+// x86_64), iOS, macOS and Linux. Plain C89, no other library, nothing
 // downloaded.
 
 import 'dart:io';
@@ -40,11 +40,13 @@ void main(List<String> args) async {
       assetName: 'src/bindings/rayo_bindings.dart',
       sources: sources,
       includes: ['include', 'src'],
-      std: 'c11',
+      std: 'c89',
       flags: [
         '-Wall',
         '-Wextra',
-        '-Wpedantic',
+        '-pedantic',
+        '-Wdeclaration-after-statement',
+        '-Wvla',
         '-Wconversion',
         '-Wshadow',
         '-fvisibility=hidden',

@@ -4,16 +4,16 @@
 #define RAYO_PUBLIC_SHA256_H
 
 #include <stddef.h>
-#include <stdint.h>
 
 #include "rayo/export.h"
+#include "rayo/types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Writes the 32-byte digest of the `size` bytes at `data` into `out`. */
-RAYO_API void rayo_sha256(const void *data, size_t size, uint8_t out[32]);
+RAYO_API void rayo_sha256(const void *data, size_t size, rayo_u8 out[32]);
 
 #ifdef __cplusplus
 }

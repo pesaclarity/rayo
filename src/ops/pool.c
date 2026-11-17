@@ -4,6 +4,7 @@
  * masked_max is max over t of (x * m - (1 - m) * fill), as Keras writes it
  * (fill 1e4 by default), so a question with no real token gives -fill.
  * masked_mean is sum over t of x * m, divided by max(sum of m, 1). */
+#include "core/mathx.h"
 #include "core/message.h"
 #include "ops/attrs.h"
 #include "ops/ops.h"
@@ -14,20 +15,22 @@ typedef struct pool_params {
 
 static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const void **params,
                            rayo_message *msg) {
+  pool_params *p;
   if (spec->inputs[0].weight || spec->inputs[1].weight) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: takes activations", spec->output);
   }
-  pool_params *p = rayo_arena_alloc(arena, sizeof *p);
+  p = rayo_arena_alloc(arena, sizeof *p);
   if (!p) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   *params = p;
   return rayo_attr_float(spec, "fill", 1e4f, &p->fill, msg);
 }
 
-static rayo_status infer(const void *params, const rayo_tensor *in, rayo_tensor *out,
-                         size_t *scratch, rayo_message *msg) {
+static rayo_status infer(const void *params, const rayo_tensor *in, const rayo_i32 *symbols,
+                         rayo_tensor *out, size_t *scratch, rayo_message *msg) {
   (void)params;
+  (void)symbols;
   if (in[0].dtype != RAYO_DTYPE_F32 || in[0].shape.rank != 2 || in[1].dtype != RAYO_DTYPE_F32 ||
-      rayo_shape_count(&in[1].shape) != in[0].shape.dims[0]) {
+      rayo_shape_count(&in[1].shape) != (size_t)in[0].shape.dims[0]) {
     return rayo_fail(msg, RAYO_ERR_SHAPE, "masked pooling: float32 [T, C] and a [T] mask");
   }
   out->dtype = RAYO_DTYPE_F32;
@@ -39,15 +42,16 @@ static rayo_status infer(const void *params, const rayo_tensor *in, rayo_tensor 
 
 static rayo_status max_run(const void *params, const rayo_tensor *in, rayo_tensor *out,
                            const rayo_exec *exec) {
-  (void)exec;
   const pool_params *p = params;
   const float *x = in[0].data, *m = in[1].data;
   const size_t t = (size_t)in[0].shape.dims[0], c = (size_t)in[0].shape.dims[1];
   float *y = out->data;
-  for (size_t j = 0; j < c; j++) y[j] = -3.4e38f;
-  for (size_t i = 0; i < t; i++) {
+  size_t i, j;
+  (void)exec;
+  for (j = 0; j < c; j++) y[j] = -RAYO_FLT_BIG;
+  for (i = 0; i < t; i++) {
     const float mi = m[i], off = (1.0f - mi) * p->fill;
-    for (size_t j = 0; j < c; j++) {
+    for (j = 0; j < c; j++) {
       const float v = x[i * c + j] * mi - off;
       y[j] = v > y[j] ? v : y[j];
     }
@@ -57,21 +61,22 @@ static rayo_status max_run(const void *params, const rayo_tensor *in, rayo_tenso
 
 static rayo_status mean_run(const void *params, const rayo_tensor *in, rayo_tensor *out,
                             const rayo_exec *exec) {
-  (void)params;
-  (void)exec;
   const float *x = in[0].data, *m = in[1].data;
   const size_t t = (size_t)in[0].shape.dims[0], c = (size_t)in[0].shape.dims[1];
   float *y = out->data;
-  float n = 0.0f;
-  for (size_t j = 0; j < c; j++) y[j] = 0.0f;
-  for (size_t i = 0; i < t; i++) {
+  float n = 0.0f, inv;
+  size_t i, j;
+  (void)params;
+  (void)exec;
+  for (j = 0; j < c; j++) y[j] = 0.0f;
+  for (i = 0; i < t; i++) {
     n += m[i];
-    for (size_t j = 0; j < c; j++) y[j] += x[i * c + j] * m[i];
+    for (j = 0; j < c; j++) y[j] += x[i * c + j] * m[i];
   }
-  const float inv = 1.0f / (n > 1.0f ? n : 1.0f);
-  for (size_t j = 0; j < c; j++) y[j] *= inv;
+  inv = 1.0f / (n > 1.0f ? n : 1.0f);
+  for (j = 0; j < c; j++) y[j] *= inv;
   return RAYO_OK;
 }
 
-const rayo_op rayo_op_masked_max = {"masked_max", 2, 2, prepare, infer, max_run};
-const rayo_op rayo_op_masked_mean = {"masked_mean", 2, 2, prepare, infer, mean_run};
+const rayo_op rayo_op_masked_max = {"masked_max", 2, 2, prepare, infer, max_run, RAYO_FALSE};
+const rayo_op rayo_op_masked_mean = {"masked_mean", 2, 2, prepare, infer, mean_run, RAYO_FALSE};

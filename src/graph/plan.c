@@ -3,51 +3,98 @@
 #include <string.h>
 
 #include "core/alloc.h"
+#include "core/compat.h"
 #include "core/message.h"
 
-void rayo_graph_node_inputs(const rayo_graph *graph, const rayo_pcwt *weights, int32_t index,
-                            const rayo_tensor *inputs, const rayo_tensor *nodes, rayo_tensor *out) {
+void rayo_graph_node_inputs(const rayo_graph *graph, const rayo_pcwt *weights, rayo_i32 index,
+                            const rayo_values *values, rayo_tensor *out) {
   const rayo_node *n = &graph->nodes[index];
-  for (int32_t i = 0; i < n->input_count; i++) {
+  rayo_i32 i;
+  for (i = 0; i < n->input_count; i++) {
     const rayo_ref r = n->inputs[i];
     if (r.kind == RAYO_REF_INPUT) {
-      out[i] = inputs[r.index];
+      out[i] = values->inputs[r.index];
+    } else if (r.kind == RAYO_REF_STATE) {
+      out[i] = values->states[r.index];
     } else if (r.kind == RAYO_REF_NODE) {
-      out[i] = nodes[r.index];
+      out[i] = values->nodes[r.index];
     } else {
-      const rayo_weight *w = &weights->weights[r.index];
-      out[i] = (rayo_tensor){w->dtype, w->shape, (void *)(uintptr_t)w->data, w};
+      out[i] = rayo_tensor_of_weight(&weights->weights[r.index]);
     }
   }
 }
 
+static void decl_shape(const rayo_graph_input *in, const rayo_i32 *symbols, rayo_tensor *t) {
+  rayo_i32 d;
+  t->dtype = in->dtype;
+  t->shape.rank = in->rank;
+  for (d = 0; d < in->rank; d++) {
+    t->shape.dims[d] = in->dims[d].symbol >= 0 ? symbols[in->dims[d].symbol] : in->dims[d].value;
+  }
+}
+
+/* Every tensor's bytes stay below 2^31, so they fit size_t everywhere. */
+static rayo_bool fits(const rayo_shape *shape) {
+  size_t n = 1;
+  rayo_i32 i;
+  for (i = 0; i < shape->rank; i++) {
+    if (shape->dims[i] < 0) return RAYO_FALSE;
+    if (shape->dims[i] != 0 && n > (size_t)(RAYO_I32_MAX / 4) / (size_t)shape->dims[i]) {
+      return RAYO_FALSE;
+    }
+    n *= (size_t)shape->dims[i];
+  }
+  return RAYO_TRUE;
+}
+
+static rayo_status node_shape(const rayo_graph *graph, const rayo_pcwt *weights,
+                              const rayo_i32 *symbols, rayo_values *values, rayo_i32 i,
+                              size_t *need, rayo_message *msg) {
+  const rayo_node *n = &graph->nodes[i];
+  rayo_tensor args[RAYO_MAX_INPUTS];
+  rayo_tensor *t = &values->nodes[i];
+  void *data;
+  rayo_status s;
+  rayo_graph_node_inputs(graph, weights, i, values, args);
+  data = n->op->aliases_input ? args[0].data : t->data;
+  memset(t, 0, sizeof *t);
+  *need = 0;
+  s = n->op->infer(n->params, args, symbols, t, need, msg);
+  if (s == RAYO_OK && !fits(&t->shape)) {
+    s = rayo_fail(msg, RAYO_ERR_SHAPE, "too large");
+  }
+  if (s != RAYO_OK) {
+    rayo_message why;
+    why.text[0] = '\0';
+    if (msg) why = *msg;
+    return rayo_fail(msg, s, "node %s: %s", n->output, why.text);
+  }
+  t->data = data;
+  return RAYO_OK;
+}
+
 rayo_status rayo_graph_shapes(const rayo_graph *graph, const rayo_pcwt *weights,
-                              const int64_t *symbols, rayo_tensor *inputs, rayo_tensor *nodes,
-                              size_t *scratch, rayo_message *msg) {
-  for (int32_t i = 0; i < graph->input_count; i++) {
-    const rayo_graph_input *in = &graph->inputs[i];
-    inputs[i].dtype = in->dtype;
-    inputs[i].shape.rank = in->rank;
-    for (int32_t d = 0; d < in->rank; d++) {
-      inputs[i].shape.dims[d] =
-          in->dims[d].symbol >= 0 ? symbols[in->dims[d].symbol] : in->dims[d].value;
+                              const rayo_i32 *symbols, rayo_values *values, size_t *scratch,
+                              rayo_message *msg) {
+  rayo_i32 i;
+  for (i = 0; i < graph->input_count; i++) {
+    decl_shape(&graph->inputs[i], symbols, &values->inputs[i]);
+    if (!fits(&values->inputs[i].shape) || rayo_shape_count(&values->inputs[i].shape) < 1) {
+      return rayo_fail(msg, RAYO_ERR_SHAPE, "input %s would be empty or too large",
+                       graph->inputs[i].name);
+    }
+  }
+  for (i = 0; i < graph->state_count; i++) {
+    decl_shape(&graph->states[i], symbols, &values->states[i]);
+    if (!fits(&values->states[i].shape)) {
+      return rayo_fail(msg, RAYO_ERR_SHAPE, "state %s is too large", graph->states[i].name);
     }
   }
   *scratch = 0;
-  for (int32_t i = 0; i < graph->node_count; i++) {
-    const rayo_node *n = &graph->nodes[i];
-    rayo_tensor args[RAYO_MAX_INPUTS];
-    rayo_graph_node_inputs(graph, weights, i, inputs, nodes, args);
-    void *data = nodes[i].data;
-    size_t need = 0;
-    memset(&nodes[i], 0, sizeof nodes[i]);
-    rayo_status s = n->op->infer(n->params, args, &nodes[i], &need, msg);
-    if (s != RAYO_OK) {
-      rayo_message why = {{0}};
-      if (msg) why = *msg;
-      return rayo_fail(msg, s, "node %s: %s", n->output, why.text);
-    }
-    nodes[i].data = data;
+  for (i = 0; i < graph->node_count; i++) {
+    size_t need;
+    rayo_status s = node_shape(graph, weights, symbols, values, i, &need, msg);
+    if (s != RAYO_OK) return s;
     if (need > *scratch) *scratch = need;
   }
   return RAYO_OK;
@@ -56,35 +103,39 @@ rayo_status rayo_graph_shapes(const rayo_graph *graph, const rayo_pcwt *weights,
 typedef struct block {
   size_t offset;
   size_t size;
-  int32_t owner; /* node, or -1 for an input */
+  rayo_i32 owner; /* the node */
 } block;
 
 /* The lowest offset where `size` bytes fit between the live blocks (sorted
  * by offset), best fit first. */
-static size_t place(const block *live, int32_t count, size_t size) {
-  size_t best = SIZE_MAX, best_gap = SIZE_MAX, at = 0;
-  for (int32_t i = 0; i < count; i++) {
+static size_t place(const block *live, rayo_i32 count, size_t size) {
+  size_t best = RAYO_SIZE_MAX, best_gap = RAYO_SIZE_MAX, at = 0;
+  rayo_i32 i;
+  for (i = 0; i < count; i++) {
     if (live[i].offset >= at && live[i].offset - at >= size && live[i].offset - at < best_gap) {
       best = at;
       best_gap = live[i].offset - at;
     }
     if (live[i].offset + live[i].size > at) at = live[i].offset + live[i].size;
   }
-  return best != SIZE_MAX ? best : at;
+  return best != RAYO_SIZE_MAX ? best : at;
 }
 
-static void insert(block *live, int32_t *count, block b) {
-  int32_t i = *count;
-  while (i > 0 && live[i - 1].offset > b.offset) {
+static void insert(block *live, rayo_i32 *count, size_t offset, size_t size, rayo_i32 owner) {
+  rayo_i32 i = *count;
+  while (i > 0 && live[i - 1].offset > offset) {
     live[i] = live[i - 1];
     i--;
   }
-  live[i] = b;
+  live[i].offset = offset;
+  live[i].size = size;
+  live[i].owner = owner;
   (*count)++;
 }
 
-static void release(block *live, int32_t *count, int32_t owner) {
-  for (int32_t i = 0; i < *count; i++) {
+static void release(block *live, rayo_i32 *count, rayo_i32 owner) {
+  rayo_i32 i;
+  for (i = 0; i < *count; i++) {
     if (live[i].owner == owner) {
       memmove(&live[i], &live[i + 1], (size_t)(*count - i - 1) * sizeof *live);
       (*count)--;
@@ -93,49 +144,62 @@ static void release(block *live, int32_t *count, int32_t owner) {
   }
 }
 
-rayo_status rayo_plan_make(const rayo_graph *graph, const rayo_tensor *inputs,
-                           const rayo_tensor *nodes, size_t scratch, rayo_arena *arena,
-                           rayo_plan *out, rayo_message *msg) {
-  const int32_t n = graph->node_count;
-  out->input_offset = rayo_arena_array(arena, (size_t)graph->input_count, sizeof(size_t));
-  out->node_offset = rayo_arena_array(arena, (size_t)n, sizeof(size_t));
-  int32_t *last = rayo_arena_array(arena, (size_t)n, sizeof *last);
-  block *live = rayo_arena_array(arena, (size_t)(n + graph->input_count), sizeof *live);
-  if (!out->input_offset || !out->node_offset || !last || !live) {
-    return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
-  }
-  for (int32_t i = 0; i < n; i++) {
-    last[i] = i;
+/* For each node, the last node that reads it (the node count for outputs). */
+static void last_uses(const rayo_graph *graph, rayo_i32 *last) {
+  rayo_i32 i, a, o;
+  for (i = 0; i < graph->node_count; i++) {
     const rayo_node *node = &graph->nodes[i];
-    for (int32_t a = 0; a < node->input_count; a++) {
+    last[i] = i;
+    for (a = 0; a < node->input_count; a++) {
       if (node->inputs[a].kind == RAYO_REF_NODE) last[node->inputs[a].index] = i;
     }
   }
-  for (int32_t o = 0; o < graph->output_count; o++) last[graph->outputs[o].node] = n;
-  int32_t count = 0;
-  size_t end = 0;
-  for (int32_t i = 0; i < graph->input_count; i++) {
-    size_t size = rayo_align_up(rayo_tensor_bytes(&inputs[i]));
-    out->input_offset[i] = end;
-    live[count++] = (block){end, size, -1};
-    end += size;
+  for (o = 0; o < graph->output_count; o++) last[graph->outputs[o].node] = graph->node_count;
+}
+
+static size_t sum_fixed(const rayo_tensor *tensors, rayo_i32 count, size_t *offsets, size_t base) {
+  rayo_i32 i;
+  for (i = 0; i < count; i++) {
+    offsets[i] = base;
+    base += rayo_align_up(rayo_tensor_bytes(&tensors[i]));
   }
-  size_t top = end;
-  for (int32_t i = 0; i < n; i++) {
-    size_t size = rayo_align_up(rayo_tensor_bytes(&nodes[i]));
-    if (size == 0)
-      return rayo_fail(msg, RAYO_ERR_SHAPE, "node %s: too large", graph->nodes[i].output);
-    size_t at = place(live, count, size);
-    out->node_offset[i] = at;
-    insert(live, &count, (block){at, size, i});
-    if (at + size > top) top = at + size;
-    /* Inputs of this node that are not read later are free from now on. */
-    for (int32_t j = 0; j <= i; j++) {
+  return base;
+}
+
+rayo_status rayo_plan_make(const rayo_graph *graph, const rayo_values *values, size_t scratch,
+                           rayo_arena *arena, rayo_plan *out, rayo_message *msg) {
+  const rayo_i32 n = graph->node_count;
+  rayo_i32 *last;
+  block *live;
+  rayo_i32 count = 0, i, j;
+  size_t base, top = 0;
+  out->state_offset = rayo_arena_array(arena, (size_t)graph->state_count + 1, sizeof(size_t));
+  out->input_offset = rayo_arena_array(arena, (size_t)graph->input_count, sizeof(size_t));
+  out->node_offset = rayo_arena_array(arena, (size_t)n, sizeof(size_t));
+  last = rayo_arena_array(arena, (size_t)n, sizeof *last);
+  live = rayo_arena_array(arena, (size_t)n + 1, sizeof *live);
+  if (!out->state_offset || !out->input_offset || !out->node_offset || !last || !live) {
+    return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
+  }
+  last_uses(graph, last);
+  /* States and inputs live for the whole run, below everything else. */
+  base = sum_fixed(values->states, graph->state_count, out->state_offset, 0);
+  base = sum_fixed(values->inputs, graph->input_count, out->input_offset, base);
+  for (i = 0; i < n; i++) {
+    if (!graph->nodes[i].op->aliases_input) {
+      size_t size = rayo_align_up(rayo_tensor_bytes(&values->nodes[i]));
+      size_t at = place(live, count, size);
+      out->node_offset[i] = base + at;
+      insert(live, &count, at, size, i);
+      if (at + size > top) top = at + size;
+    }
+    /* Nodes not read after this one are free from now on. */
+    for (j = 0; j <= i; j++) {
       if (last[j] == i) release(live, &count, j);
     }
   }
-  out->scratch_offset = top;
+  out->scratch_offset = base + top;
   out->scratch_bytes = rayo_align_up(scratch);
-  out->arena_bytes = top + out->scratch_bytes;
+  out->arena_bytes = out->scratch_offset + out->scratch_bytes;
   return RAYO_OK;
 }

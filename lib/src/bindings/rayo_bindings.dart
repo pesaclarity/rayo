@@ -22,7 +22,7 @@ final class RayoShape extends Struct {
   external int rank;
 
   @Array(4)
-  external Array<Int64> dims;
+  external Array<Int32> dims;
 }
 
 /// `rayo_tensor_view`.
@@ -144,7 +144,7 @@ external void rayo_session_destroy(Pointer<RayoSessionHandle> session);
   Int32 Function(
     Pointer<RayoSessionHandle>,
     Pointer<Uint8>,
-    Int64,
+    Int32,
     Pointer<RayoMessage>,
   )
 >(isLeaf: true)
@@ -178,6 +178,9 @@ external int rayo_session_output(
   int index,
   Pointer<RayoTensorView> out,
 );
+
+@Native<Void Function(Pointer<RayoSessionHandle>)>(isLeaf: true)
+external void rayo_session_reset(Pointer<RayoSessionHandle> session);
 
 @Native<Pointer<Uint8> Function(Pointer<RayoSessionHandle>)>(isLeaf: true)
 external Pointer<Uint8> rayo_session_kernels(
