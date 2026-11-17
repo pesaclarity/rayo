@@ -1,13 +1,14 @@
 #include "core/message.h"
 
 #include <stdarg.h>
-#include <stdio.h>
+
+#include "core/format.h"
 
 rayo_status rayo_fail(rayo_message *msg, rayo_status status, const char *fmt, ...) {
   if (msg) {
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(msg->text, sizeof msg->text, fmt, ap);
+    rayo_vformat(msg->text, sizeof msg->text, fmt, ap);
     va_end(ap);
   }
   return status;

@@ -1,48 +1,23 @@
 #!/usr/bin/env bash
-# Everything CI checks: the C library with strict warnings and the sanitisers,
-# its unit and golden tests (with allocation counting), the test models, and
-# the Dart package (format, analyze, tests through the build hook).
+# Everything CI checks that this computer can: the same scripts as
+# .github/workflows/ci.yml (tool/ci/).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-out="$(mktemp -d)"
-trap 'rm -rf "$out"' EXIT
-cc="${CC:-cc}"
-warn=(-std=c11 -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow -Wvla)
-srcs=$(find src -name '*.c' | LC_ALL=C sort)
-wrap=-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
-
-echo "== test models"
-python3 tool/make_test_models.py >/dev/null
-git diff --quiet -- tests/models || { echo "tests/models differ from tool/make_test_models.py" >&2; exit 1; }
-
-echo "== C: generic build"
-# shellcheck disable=SC2086
-"$cc" "${warn[@]}" -O2 -Iinclude -Isrc -Itests $srcs tests/*.c -lm $wrap -o "$out/tests"
-"$out/tests"
-
-if [ "$(uname -m)" = x86_64 ]; then
-  echo "== C: AVX2 build, address and undefined-behaviour sanitisers"
-  # shellcheck disable=SC2086
-  "$cc" "${warn[@]}" -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all \
-    -fno-omit-frame-pointer -mavx2 -mfma -Iinclude -Isrc -Itests $srcs tests/*.c -lm $wrap \
-    -o "$out/tests-asan"
-  ASAN_OPTIONS=detect_leaks=1 "$out/tests-asan"
-fi
-
-echo "== C: tools"
-# shellcheck disable=SC2086
-for t in ask_reader_check ask_writer_bench; do
-  "$cc" "${warn[@]}" -O2 -Iinclude -Isrc $srcs "tools/$t.c" -lm -o "$out/$t"
+tool/ci/models.sh
+tool/ci/lint.sh
+for cc in gcc clang; do
+  command -v "$cc" >/dev/null || continue
+  tool/ci/test.sh "$cc"
+  if [ "$(uname -m)" = x86_64 ]; then
+    tool/ci/test.sh "$cc" -msse4.1
+    tool/ci/test.sh "$cc" -mavx2 -mfma
+  fi
 done
-
-if command -v clang-format >/dev/null; then
-  echo "== C: format"
-  # shellcheck disable=SC2086
-  clang-format --dry-run --Werror include/rayo/*.h $(find src tests tools -name '*.[ch]')
+if [ "$(uname -m)" = x86_64 ]; then
+  tool/ci/sanitize.sh gcc -mavx2 -mfma
+else
+  tool/ci/sanitize.sh cc
 fi
-
-echo "== Dart"
-dart format --output=none --set-exit-if-changed lib test hook
-dart analyze --fatal-infos
-dart test
+if [ -n "${ANDROID_NDK_HOME:-}" ]; then tool/ci/android.sh; fi
+tool/ci/dart.sh

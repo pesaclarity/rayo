@@ -6,7 +6,6 @@
 #define RAYO_GRAPH_PLAN_H
 
 #include <stddef.h>
-#include <stdint.h>
 
 #include "core/arena.h"
 #include "core/tensor.h"
@@ -29,14 +28,14 @@ typedef struct rayo_plan {
 } rayo_plan;
 
 /* The tensors node `index` reads, into `out` (RAYO_MAX_INPUTS of them). */
-void rayo_graph_node_inputs(const rayo_graph *graph, const rayo_pcwt *weights, int32_t index,
+void rayo_graph_node_inputs(const rayo_graph *graph, const rayo_pcwt *weights, rayo_i32 index,
                             const rayo_values *values, rayo_tensor *out);
 
 /* Every input's, state's and node's dtype and shape with the symbols at
  * `symbols`, and the most scratch one op needs. A node that views a state
  * gets the state's memory. Allocates nothing. */
 rayo_status rayo_graph_shapes(const rayo_graph *graph, const rayo_pcwt *weights,
-                              const int64_t *symbols, rayo_values *values, size_t *scratch,
+                              const rayo_i32 *symbols, rayo_values *values, size_t *scratch,
                               rayo_message *msg);
 
 /* Plans the arena for the shapes in `values` (the largest), with the

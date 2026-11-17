@@ -2,8 +2,6 @@
 #ifndef RAYO_SESSION_H
 #define RAYO_SESSION_H
 
-#include <stdint.h>
-
 #include "rayo/error.h"
 #include "rayo/export.h"
 #include "rayo/model.h"
@@ -28,7 +26,7 @@ RAYO_API void rayo_session_destroy(rayo_session *session);
 
 /* Sets size symbol `name` (such as "T") to `value`, at most the largest the
  * graph declares, for the next runs. */
-RAYO_API rayo_status rayo_session_bind(rayo_session *session, const char *name, int64_t value,
+RAYO_API rayo_status rayo_session_bind(rayo_session *session, const char *name, rayo_i32 value,
                                        rayo_message *msg);
 
 /* Input `index`, at the current sizes, for the caller to write into. The

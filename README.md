@@ -1,15 +1,19 @@
 # rayo
 
-On-device inference in plain C11, for Dart and Flutter. Built for
+[![CI](https://github.com/pesaclarity/rayo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pesaclarity/rayo/actions/workflows/ci.yml)
+
+On-device inference in plain C89 (ANSI C), for Dart and Flutter. Built for
 [Pesa Clarity](https://github.com/pesaclarity), whose small models (a question reader, a reply
 writer) run on the phone, offline, in the Play and the F-Droid builds alike.
 
 - **Our own engine, no Google code**: no TFLite/LiteRT, no XNNPACK, and no other library. The
   kernels for exactly the ops our models use, portable C first, SIMD where it pays.
-- **Built from source**: a Dart build hook compiles `src/` with the platform's C compiler
-  (the NDK, Xcode, clang/gcc). Nothing is downloaded, nothing is prebuilt, so F-Droid builds
-  it offline like the rest of the app. No C++ anywhere.
-- **Small**: the Android library is about 63 KB (arm64-v8a), 49 KB (armeabi-v7a) and 64 KB
+- **Built from source, in C89**: a Dart build hook compiles `src/` with the platform's C
+  compiler (the NDK, Xcode, clang/gcc), `-std=c89 -pedantic -Werror`. Nothing is downloaded,
+  nothing is prebuilt, so F-Droid builds it offline like the rest of the app. No C++ anywhere.
+  Compiler extensions (SIMD intrinsics, target attributes, CPU checks) live only in
+  `src/kernels/x86*.c` and `src/kernels/neon*.c`, behind `#if`, and those files are C89 too.
+- **Small**: the Android library is about 63 KB (arm64-v8a), 49 KB (armeabi-v7a) and 66 KB
   (x86_64), stripped.
 - **Memory planned once**: a session plans every activation into one arena when it is made
   (buffers whose lifetimes do not overlap share memory); a run allocates nothing.
@@ -69,7 +73,7 @@ A model is a plain-weights file (PCWT) with its graph in the header:
 ```
 include/rayo/     public headers: rayo.h (all of them), types.h, error.h, tensor.h,
                   model.h, session.h, sha256.h, version.h
-src/core/         allocation, arena, JSON, tensors, messages
+src/core/         allocation, arena, JSON, tensors, messages and formatting, maths, C89 shims
 src/format/       the PCWT reader and its checks
 src/graph/        the graph, shapes and the memory plan
 src/ops/          one file per op family, and the registry
@@ -77,7 +81,7 @@ src/kernels/      generic.c, x86.c (SSE4.1/AVX2), x86_vnni.c, neon.c, neon_dotpr
                   quantize.c, select.c (which kernels this CPU runs)
 src/model.c, src/session.c, src/sha256/
 lib/              the Dart API: bindings/, model.dart, session.dart, isolate_runner.dart, ...
-tests/            the C tests (tests/test_*.c) and test models
+tests/            the C tests (tests/test_*.c), test models, and the real Ask models (tests/ask)
 tools/            ask_reader_check.c: the reader against TFLite's recorded outputs, timed;
                   ask_writer_bench.c: the writer decoding the recorded replies, timed
 ```
@@ -125,12 +129,44 @@ For the reader, loading the model takes about 0.2 ms and making a session about 
 copy (251 KB), the session's arena (241 KB) and 82 KB of tables. Measured with
 `tools/ask_reader_check.c`, which also prints the time per op. Not yet measured on a phone.
 
+## C89
+
+Every C file, the tests' and tools' too, builds with gcc and clang as
+`-std=c89 -pedantic -Werror -Wall -Wextra -Wconversion -Wshadow -Wdeclaration-after-statement -Wvla`.
+
+- No `//`, declarations at the top of blocks, no designated initialisers or compound literals,
+  no `inline`, `restrict` only as `RAYO_RESTRICT` (`__restrict__` where the compiler has it),
+  no `stdint.h` or `stdbool.h`: `include/rayo/types.h` defines `rayo_i8` to `rayo_u32`,
+  `rayo_f32` and `rayo_bool`, with compile-time size checks.
+- No 64-bit integers: dimensions are `rayo_i32`, byte counts `size_t`, and every tensor stays
+  below 2^31 bytes (checked when a model loads and at every bind). SHA-256 counts its length in
+  two 32-bit words.
+- C89 has no `snprintf`, `expf`, `sqrtf` or `erf`: `src/core/format.c` formats messages
+  (bounded), and `src/core/mathx.c` computes exp and sqrt in double and erf from fitted
+  polynomials (correctly rounded on every float in [-6, 6] but where pieces meet; glibc's
+  `erff` is one ulp off on 5% of them).
+
 ## Develop
 
 ```sh
 dart pub get
-tool/check   # C tests (generic, and AVX2 under ASan/UBSan), formats, Dart analyze and tests
+tool/check   # what CI runs and this computer can: lint, C tests, sanitisers, Android, Dart
 ```
+
+`tool/ci/*.sh` are the steps; `tool/check` and `.github/workflows/ci.yml` both call them.
+
+## CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request and push to
+`main`: lint (format, C89 with gcc and clang), the C tests on Linux x86_64 (gcc and clang;
+generic, SSE4.1 and AVX2 builds, each kernel set, AVX-VNNI where the runner has it), under
+ASan, LSan and UBSan, natively on Linux arm64 (NEON, and SDOT where the CPU has it), on
+armv7 under QEMU, on macOS arm64, the Android NDK builds with a size budget, and the Dart
+package on Linux and macOS. On `main` a bench job reports the timings in the job summary.
+
+To protect `main`, require these checks: `lint`, `linux-x86_64 (gcc)`, `linux-x86_64 (clang)`,
+`sanitizers`, `linux-arm64`, `linux-armv7`, `macos`, `android`, `dart (ubuntu-24.04)`,
+`dart (macos-15)`.
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/); the changelog is
 written from them.

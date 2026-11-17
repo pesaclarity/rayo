@@ -3,11 +3,10 @@
 #ifndef RAYO_OPS_OP_H
 #define RAYO_OPS_OP_H
 
-#include <stdbool.h>
 #include <stddef.h>
-#include <stdint.h>
 
 #include "core/arena.h"
+#include "core/compat.h"
 #include "core/json.h"
 #include "core/tensor.h"
 #include "kernels/kernels.h"
@@ -21,11 +20,11 @@ typedef struct rayo_op rayo_op;
 typedef struct rayo_exec {
   const rayo_kernels *kernels; /* chosen for this CPU when the session was made */
   void *scratch;               /* at least the bytes `infer` asked for, RAYO_ALIGN-aligned */
-  const int64_t *symbols;      /* the size symbols' current values */
+  const rayo_i32 *symbols;     /* the size symbols' current values */
 } rayo_exec;
 
 /* Looks a size symbol up by name: its index, or -1. */
-typedef int32_t rayo_symbol_fn(const void *graph, const char *name);
+typedef rayo_i32 rayo_symbol_fn(const void *graph, const char *name);
 
 /* What an op is given about its node when the model loads. */
 typedef struct rayo_op_spec {
@@ -47,13 +46,13 @@ struct rayo_op {
                          rayo_message *msg);
   /* The output's dtype and shape for these inputs, and the scratch bytes the
    * run needs. Called when a session is planned and at every bind. */
-  rayo_status (*infer)(const void *params, const rayo_tensor *inputs, const int64_t *symbols,
+  rayo_status (*infer)(const void *params, const rayo_tensor *inputs, const rayo_i32 *symbols,
                        rayo_tensor *output, size_t *scratch, rayo_message *msg);
   /* Computes `output` (its memory set) from `inputs`. Allocates nothing. */
   rayo_status (*run)(const void *params, const rayo_tensor *inputs, rayo_tensor *output,
                      const rayo_exec *exec);
   /* The output is a view of input 0's memory (a state), not planned memory. */
-  bool aliases_input;
+  rayo_bool aliases_input;
 };
 
 /* The op called `name`, or NULL. */

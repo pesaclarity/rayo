@@ -4,16 +4,16 @@
 
 #include "core/message.h"
 
-rayo_status rayo_attr_int(const rayo_op_spec *spec, const char *key, int64_t fallback, int64_t lo,
-                          int64_t hi, int64_t *out, rayo_message *msg) {
+rayo_status rayo_attr_int(const rayo_op_spec *spec, const char *key, rayo_i32 fallback, rayo_i32 lo,
+                          rayo_i32 hi, rayo_i32 *out, rayo_message *msg) {
   const rayo_json *v = rayo_json_get(spec->json, key);
   if (!v) {
     *out = fallback;
     return RAYO_OK;
   }
   if (!rayo_json_as_int(v, out) || *out < lo || *out > hi) {
-    return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: %s must be a whole number from %lld to %lld",
-                     spec->output, key, (long long)lo, (long long)hi);
+    return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: %s must be a whole number from %ld to %ld",
+                     spec->output, key, (long)lo, (long)hi);
   }
   return RAYO_OK;
 }
@@ -25,7 +25,7 @@ rayo_status rayo_attr_float(const rayo_op_spec *spec, const char *key, float fal
     *out = fallback;
     return RAYO_OK;
   }
-  if (v->kind != RAYO_JSON_NUMBER) {
+  if (v->kind != RAYO_JSON_NUMBER || v->number > 3.0e38 || v->number < -3.0e38) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: %s must be a number", spec->output, key);
   }
   *out = (float)v->number;
@@ -62,13 +62,14 @@ rayo_status rayo_attr_activation(const rayo_op_spec *spec, rayo_activation *out,
   return RAYO_OK;
 }
 
-rayo_status rayo_attr_size(const rayo_op_spec *spec, const char *key, int64_t fallback,
+rayo_status rayo_attr_size(const rayo_op_spec *spec, const char *key, rayo_i32 fallback,
                            rayo_size_attr *out, rayo_message *msg) {
   const rayo_json *v = rayo_json_get(spec->json, key);
+  const char *name;
   out->symbol = -1;
   out->value = fallback;
   if (!v) return RAYO_OK;
-  const char *name = rayo_json_as_string(v);
+  name = rayo_json_as_string(v);
   if (name) {
     out->symbol = spec->symbol(spec->graph, name);
     if (out->symbol < 0) {
@@ -78,4 +79,8 @@ rayo_status rayo_attr_size(const rayo_op_spec *spec, const char *key, int64_t fa
     return RAYO_OK;
   }
   return rayo_attr_int(spec, key, fallback, 0, 1 << 24, &out->value, msg);
+}
+
+rayo_i32 rayo_size_value(rayo_size_attr a, const rayo_i32 *symbols) {
+  return a.symbol >= 0 ? symbols[a.symbol] : a.value;
 }

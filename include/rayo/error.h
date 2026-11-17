@@ -14,7 +14,7 @@ typedef enum rayo_status {
   RAYO_ERR_FORMAT = 2,           /* the model file is damaged or not one */
   RAYO_ERR_UNSUPPORTED = 3,      /* a version, op or dtype this rayo does not run */
   RAYO_ERR_OUT_OF_MEMORY = 4,
-  RAYO_ERR_SHAPE = 5, /* sizes that do not fit the graph */
+  RAYO_ERR_SHAPE = 5 /* sizes that do not fit the graph */
 } rayo_status;
 
 /* A human-readable message for a failed call. Functions that can fail take

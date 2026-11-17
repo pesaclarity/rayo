@@ -7,41 +7,43 @@
  * As TFLite runs Keras' attention: scores = (q · k) * scale, softmax, then
  * the weighted sum of v; a hidden key adds -1e9 there, which is exactly a
  * zero weight in float32, so hidden keys are skipped here. */
-#include <math.h>
-
+#include "core/mathx.h"
 #include "core/message.h"
 #include "ops/attrs.h"
 #include "ops/ops.h"
 #include "ops/scratch.h"
 
 typedef struct attention_params {
-  int64_t heads;
-  int64_t causal;
+  rayo_i32 heads;
+  rayo_i32 causal;
   float scale; /* 0: 1 / sqrt(D / heads) */
 } attention_params;
 
 static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const void **params,
                            rayo_message *msg) {
-  for (int i = 0; i < 3; i++) {
+  attention_params *p;
+  rayo_status s;
+  int i;
+  for (i = 0; i < 3; i++) {
     if (spec->inputs[i].weight) {
       return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: attention takes q, k and v activations",
                        spec->output);
     }
   }
-  attention_params *p = rayo_arena_alloc(arena, sizeof *p);
+  p = rayo_arena_alloc(arena, sizeof *p);
   if (!p) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   *params = p;
-  rayo_status s = rayo_attr_int(spec, "heads", 1, 1, 256, &p->heads, msg);
+  s = rayo_attr_int(spec, "heads", 1, 1, 256, &p->heads, msg);
   if (s == RAYO_OK) s = rayo_attr_int(spec, "causal", 0, 0, 1, &p->causal, msg);
   if (s == RAYO_OK) s = rayo_attr_float(spec, "scale", 0.0f, &p->scale, msg);
   return s;
 }
 
-static rayo_status infer(const void *params, const rayo_tensor *in, const int64_t *symbols,
+static rayo_status infer(const void *params, const rayo_tensor *in, const rayo_i32 *symbols,
                          rayo_tensor *out, size_t *scratch, rayo_message *msg) {
-  (void)symbols;
   const attention_params *p = params;
   const rayo_shape *q = &in[0].shape, *k = &in[1].shape, *v = &in[2].shape;
+  (void)symbols;
   if (in[0].dtype != RAYO_DTYPE_F32 || in[1].dtype != RAYO_DTYPE_F32 ||
       in[2].dtype != RAYO_DTYPE_F32 || q->rank != 2 || k->rank != 2 || v->rank != 2 ||
       k->dims[1] != q->dims[1] || v->dims[1] != q->dims[1] || v->dims[0] != k->dims[0] ||
@@ -56,43 +58,49 @@ static rayo_status infer(const void *params, const rayo_tensor *in, const int64_
   return RAYO_OK;
 }
 
+/* One query, one head: out[0..hd) from keys and values 0 .. seen - 1, with
+ * w (seen floats) for the weights. */
+static void attend(const float *qi, const float *k, const float *v, size_t d, size_t hd,
+                   size_t seen, float scale, float *w, float *out) {
+  float top = -RAYO_FLT_BIG, sum = 0.0f, inv;
+  size_t j, e;
+  for (j = 0; j < seen; j++) {
+    const float *kj = k + j * d;
+    float dot = 0.0f;
+    for (e = 0; e < hd; e++) dot += qi[e] * kj[e];
+    w[j] = dot * scale;
+    top = w[j] > top ? w[j] : top;
+  }
+  for (j = 0; j < seen; j++) {
+    w[j] = rayo_expf(w[j] - top);
+    sum += w[j];
+  }
+  inv = 1.0f / sum;
+  for (e = 0; e < hd; e++) out[e] = 0.0f;
+  for (j = 0; j < seen; j++) {
+    const float pj = w[j] * inv;
+    const float *vj = v + j * d;
+    for (e = 0; e < hd; e++) out[e] += pj * vj[e];
+  }
+}
+
 static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *out,
                        const rayo_exec *exec) {
   const attention_params *p = params;
   const size_t t = (size_t)in[0].shape.dims[0], d = (size_t)in[0].shape.dims[1];
   const size_t s = (size_t)in[1].shape.dims[0], heads = (size_t)p->heads, hd = d / heads;
-  const float scale = p->scale != 0.0f ? p->scale : 1.0f / sqrtf((float)hd);
+  const float scale = p->scale != 0.0f ? p->scale : 1.0f / rayo_sqrtf((float)hd);
   const float *q = in[0].data, *k = in[1].data, *v = in[2].data;
   float *y = out->data;
-  float *w = exec->scratch;
-  for (size_t i = 0; i < t; i++) {
+  size_t i, h;
+  for (i = 0; i < t; i++) {
     const size_t seen = p->causal ? s - t + i + 1 : s;
-    for (size_t h = 0; h < heads; h++) {
-      const float *qi = q + i * d + h * hd;
-      float top = -INFINITY;
-      for (size_t j = 0; j < seen; j++) {
-        const float *kj = k + j * d + h * hd;
-        float dot = 0.0f;
-        for (size_t e = 0; e < hd; e++) dot += qi[e] * kj[e];
-        w[j] = dot * scale;
-        top = w[j] > top ? w[j] : top;
-      }
-      float sum = 0.0f;
-      for (size_t j = 0; j < seen; j++) {
-        w[j] = expf(w[j] - top);
-        sum += w[j];
-      }
-      const float inv = 1.0f / sum;
-      float *yi = y + i * d + h * hd;
-      for (size_t e = 0; e < hd; e++) yi[e] = 0.0f;
-      for (size_t j = 0; j < seen; j++) {
-        const float pj = w[j] * inv;
-        const float *vj = v + j * d + h * hd;
-        for (size_t e = 0; e < hd; e++) yi[e] += pj * vj[e];
-      }
+    for (h = 0; h < heads; h++) {
+      attend(q + i * d + h * hd, k + h * hd, v + h * hd, d, hd, seen, scale, (float *)exec->scratch,
+             y + i * d + h * hd);
     }
   }
   return RAYO_OK;
 }
 
-const rayo_op rayo_op_attention = {"attention", 3, 3, prepare, infer, run, false};
+const rayo_op rayo_op_attention = {"attention", 3, 3, prepare, infer, run, RAYO_FALSE};

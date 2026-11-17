@@ -1,5 +1,6 @@
 #include "core/json.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,10 @@ static rayo_status fail(parser *p, const char *what) {
   return rayo_fail(p->msg, RAYO_ERR_FORMAT, "bad JSON in the header: %s", what);
 }
 
+static rayo_status no_memory(parser *p) {
+  return rayo_fail(p->msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
+}
+
 static void skip_ws(parser *p) {
   while (p->at < p->end && (*p->at == ' ' || *p->at == '\t' || *p->at == '\n' || *p->at == '\r')) {
     p->at++;
@@ -34,7 +39,7 @@ static int hex(char c) {
   return -1;
 }
 
-static size_t put_utf8(char *to, uint32_t cp) {
+static size_t put_utf8(char *to, rayo_u32 cp) {
   if (cp < 0x80) {
     to[0] = (char)cp;
     return 1;
@@ -57,81 +62,88 @@ static size_t put_utf8(char *to, uint32_t cp) {
   return 4;
 }
 
-static bool read_hex4(parser *p, uint32_t *out) {
-  if (p->end - p->at < 4) return false;
-  uint32_t v = 0;
-  for (int i = 0; i < 4; i++) {
+static rayo_bool read_hex4(parser *p, rayo_u32 *out) {
+  rayo_u32 v = 0;
+  int i;
+  if (p->end - p->at < 4) return RAYO_FALSE;
+  for (i = 0; i < 4; i++) {
     int h = hex(p->at[i]);
-    if (h < 0) return false;
-    v = v * 16 + (uint32_t)h;
+    if (h < 0) return RAYO_FALSE;
+    v = v * 16 + (rayo_u32)h;
   }
   p->at += 4;
   *out = v;
-  return true;
+  return RAYO_TRUE;
+}
+
+/* A \u escape (after the "\u"), with its low surrogate when it has one. */
+static rayo_status read_escape_u(parser *p, const char *end, rayo_u32 *cp) {
+  rayo_u32 lo;
+  if (!read_hex4(p, cp)) return fail(p, "bad \\u escape");
+  if (*cp >= 0xD800 && *cp <= 0xDBFF) {
+    if (end - p->at < 6 || p->at[0] != '\\' || p->at[1] != 'u') return fail(p, "lone surrogate");
+    p->at += 2;
+    if (!read_hex4(p, &lo) || lo < 0xDC00 || lo > 0xDFFF) return fail(p, "lone surrogate");
+    *cp = 0x10000 + ((*cp - 0xD800) << 10) + (lo - 0xDC00);
+  } else if (*cp >= 0xDC00 && *cp <= 0xDFFF) {
+    return fail(p, "lone surrogate");
+  }
+  if (*cp == 0) return fail(p, "NUL in a string");
+  return RAYO_OK;
+}
+
+static int simple_escape(char e) {
+  switch (e) {
+    case '"':
+      return '"';
+    case '\\':
+      return '\\';
+    case '/':
+      return '/';
+    case 'b':
+      return '\b';
+    case 'f':
+      return '\f';
+    case 'n':
+      return '\n';
+    case 'r':
+      return '\r';
+    case 't':
+      return '\t';
+  }
+  return -1;
 }
 
 /* After the opening quote. The unescaped text is never longer than the
  * escaped one, so one allocation of the escaped length suffices. */
 static rayo_status parse_string(parser *p, const char **out, size_t *len) {
-  const char *start = p->at;
-  const char *q = start;
+  const char *q = p->at;
+  char *s;
+  size_t n = 0;
   while (q < p->end && *q != '"') q += (*q == '\\' && q + 1 < p->end) ? 2 : 1;
   if (q >= p->end) return fail(p, "unterminated string");
-  char *s = rayo_arena_alloc(p->arena, (size_t)(q - start) + 1);
-  if (!s) return rayo_fail(p->msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
-  size_t n = 0;
+  s = (char *)rayo_arena_alloc(p->arena, (size_t)(q - p->at) + 1);
+  if (!s) return no_memory(p);
   while (p->at < q) {
     unsigned char c = (unsigned char)*p->at++;
+    char e;
+    int simple;
     if (c < 0x20) return fail(p, "control character in a string");
     if (c != '\\') {
       s[n++] = (char)c;
       continue;
     }
-    char e = *p->at++;
-    switch (e) {
-      case '"':
-        s[n++] = '"';
-        break;
-      case '\\':
-        s[n++] = '\\';
-        break;
-      case '/':
-        s[n++] = '/';
-        break;
-      case 'b':
-        s[n++] = '\b';
-        break;
-      case 'f':
-        s[n++] = '\f';
-        break;
-      case 'n':
-        s[n++] = '\n';
-        break;
-      case 'r':
-        s[n++] = '\r';
-        break;
-      case 't':
-        s[n++] = '\t';
-        break;
-      case 'u': {
-        uint32_t cp;
-        if (!read_hex4(p, &cp)) return fail(p, "bad \\u escape");
-        if (cp >= 0xD800 && cp <= 0xDBFF) {
-          uint32_t lo;
-          if (q - p->at < 6 || p->at[0] != '\\' || p->at[1] != 'u')
-            return fail(p, "lone surrogate");
-          p->at += 2;
-          if (!read_hex4(p, &lo) || lo < 0xDC00 || lo > 0xDFFF) return fail(p, "lone surrogate");
-          cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-        } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
-          return fail(p, "lone surrogate");
-        }
-        if (cp == 0) return fail(p, "NUL in a string");
-        n += put_utf8(s + n, cp);
-        break;
-      }
-      default:
-        return fail(p, "bad escape");
+    e = *p->at++;
+    simple = simple_escape(e);
+    if (simple >= 0) {
+      s[n++] = (char)simple;
+    } else if (e == 'u') {
+      rayo_u32 cp = 0;
+      rayo_status st = read_escape_u(p, q, &cp);
+      if (st != RAYO_OK) return st;
+      n += put_utf8(s + n, cp);
+    } else {
+      return fail(p, "bad escape");
     }
   }
   p->at = q + 1;
@@ -141,44 +153,50 @@ static rayo_status parse_string(parser *p, const char **out, size_t *len) {
   return RAYO_OK;
 }
 
+static const char *skip_digits(const char *s, const char *end) {
+  while (s < end && *s >= '0' && *s <= '9') s++;
+  return s;
+}
+
 static rayo_status parse_number(parser *p, double *out) {
   const char *s = p->at;
+  char buf[64];
+  size_t n;
   if (s < p->end && *s == '-') s++;
   if (s >= p->end) return fail(p, "bad number");
   if (*s == '0') {
     s++;
   } else if (*s >= '1' && *s <= '9') {
-    while (s < p->end && *s >= '0' && *s <= '9') s++;
+    s = skip_digits(s, p->end);
   } else {
     return fail(p, "bad number");
   }
   if (s < p->end && *s == '.') {
     s++;
     if (s >= p->end || *s < '0' || *s > '9') return fail(p, "bad number");
-    while (s < p->end && *s >= '0' && *s <= '9') s++;
+    s = skip_digits(s, p->end);
   }
   if (s < p->end && (*s == 'e' || *s == 'E')) {
     s++;
     if (s < p->end && (*s == '+' || *s == '-')) s++;
     if (s >= p->end || *s < '0' || *s > '9') return fail(p, "bad number");
-    while (s < p->end && *s >= '0' && *s <= '9') s++;
+    s = skip_digits(s, p->end);
   }
-  char buf[64];
-  size_t n = (size_t)(s - p->at);
+  n = (size_t)(s - p->at);
   if (n >= sizeof buf) return fail(p, "number too long");
   memcpy(buf, p->at, n);
   buf[n] = '\0';
   *out = strtod(buf, NULL);
-  if (!isfinite(*out)) return fail(p, "number out of range");
+  if (!(*out <= DBL_MAX && *out >= -DBL_MAX)) return fail(p, "number out of range");
   p->at = s;
   return RAYO_OK;
 }
 
-static bool literal(parser *p, const char *word) {
+static rayo_bool literal(parser *p, const char *word) {
   size_t n = strlen(word);
-  if ((size_t)(p->end - p->at) < n || memcmp(p->at, word, n) != 0) return false;
+  if ((size_t)(p->end - p->at) < n || memcmp(p->at, word, n) != 0) return RAYO_FALSE;
   p->at += n;
-  return true;
+  return RAYO_TRUE;
 }
 
 /* A growing array of items (and keys) in the arena. */
@@ -191,9 +209,9 @@ typedef struct items {
 static rayo_status push(parser *p, items *it, const char *key, rayo_json *v) {
   if (it->n == it->cap) {
     size_t cap = it->cap ? it->cap * 2 : 8;
-    rayo_json **values = rayo_arena_array(p->arena, cap, sizeof *values);
-    const char **keys = rayo_arena_array(p->arena, cap, sizeof *keys);
-    if (!values || !keys) return rayo_fail(p->msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
+    rayo_json **values = (rayo_json **)rayo_arena_array(p->arena, cap, sizeof *values);
+    const char **keys = (const char **)rayo_arena_array(p->arena, cap, sizeof *keys);
+    if (!values || !keys) return no_memory(p);
     if (it->n) {
       memcpy(values, it->values, it->n * sizeof *values);
       memcpy(keys, it->keys, it->n * sizeof *keys);
@@ -208,28 +226,39 @@ static rayo_status push(parser *p, items *it, const char *key, rayo_json *v) {
   return RAYO_OK;
 }
 
-static rayo_status parse_container(parser *p, int depth, bool object, rayo_json *v) {
-  items it = {0};
+static rayo_status parse_key(parser *p, const char **key) {
+  size_t key_len;
+  rayo_status s;
+  skip_ws(p);
+  if (p->at >= p->end || *p->at != '"') return fail(p, "expected a key");
+  p->at++;
+  s = parse_string(p, key, &key_len);
+  if (s != RAYO_OK) return s;
+  skip_ws(p);
+  if (p->at >= p->end || *p->at != ':') return fail(p, "expected ':'");
+  p->at++;
+  return RAYO_OK;
+}
+
+static rayo_status parse_container(parser *p, int depth, rayo_bool object, rayo_json *v) {
+  items it;
   char close = object ? '}' : ']';
+  it.values = NULL;
+  it.keys = NULL;
+  it.n = it.cap = 0;
   skip_ws(p);
   if (p->at < p->end && *p->at == close) {
     p->at++;
   } else {
     for (;;) {
       const char *key = NULL;
+      rayo_json *item = NULL;
+      rayo_status s;
       if (object) {
-        size_t key_len;
-        skip_ws(p);
-        if (p->at >= p->end || *p->at != '"') return fail(p, "expected a key");
-        p->at++;
-        rayo_status s = parse_string(p, &key, &key_len);
+        s = parse_key(p, &key);
         if (s != RAYO_OK) return s;
-        skip_ws(p);
-        if (p->at >= p->end || *p->at != ':') return fail(p, "expected ':'");
-        p->at++;
       }
-      rayo_json *item;
-      rayo_status s = parse_value(p, depth + 1, &item);
+      s = parse_value(p, depth + 1, &item);
       if (s != RAYO_OK) return s;
       s = push(p, &it, key, item);
       if (s != RAYO_OK) return s;
@@ -252,14 +281,16 @@ static rayo_status parse_container(parser *p, int depth, bool object, rayo_json 
 }
 
 static rayo_status parse_value(parser *p, int depth, rayo_json **out) {
+  rayo_json *v;
+  rayo_status s = RAYO_OK;
+  char c;
   if (depth > RAYO_JSON_DEPTH) return fail(p, "nested too deep");
   skip_ws(p);
   if (p->at >= p->end) return fail(p, "unexpected end");
-  rayo_json *v = rayo_arena_alloc(p->arena, sizeof *v);
-  if (!v) return rayo_fail(p->msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
+  v = (rayo_json *)rayo_arena_alloc(p->arena, sizeof *v);
+  if (!v) return no_memory(p);
   v->raw = p->at;
-  rayo_status s = RAYO_OK;
-  char c = *p->at;
+  c = *p->at;
   if (c == '{' || c == '[') {
     p->at++;
     v->kind = c == '{' ? RAYO_JSON_OBJECT : RAYO_JSON_ARRAY;
@@ -273,7 +304,7 @@ static rayo_status parse_value(parser *p, int depth, rayo_json **out) {
     s = parse_number(p, &v->number);
   } else if (literal(p, "true")) {
     v->kind = RAYO_JSON_BOOL;
-    v->boolean = true;
+    v->boolean = RAYO_TRUE;
   } else if (literal(p, "false")) {
     v->kind = RAYO_JSON_BOOL;
   } else if (literal(p, "null")) {
@@ -289,8 +320,13 @@ static rayo_status parse_value(parser *p, int depth, rayo_json **out) {
 
 rayo_status rayo_json_parse(const char *text, size_t size, rayo_arena *arena, rayo_json **out,
                             rayo_message *msg) {
-  parser p = {text, text + size, arena, msg};
-  rayo_status s = parse_value(&p, 0, out);
+  parser p;
+  rayo_status s;
+  p.at = text;
+  p.end = text + size;
+  p.arena = arena;
+  p.msg = msg;
+  s = parse_value(&p, 0, out);
   if (s != RAYO_OK) return s;
   skip_ws(&p);
   if (p.at != p.end) return fail(&p, "text after the value");
@@ -298,19 +334,21 @@ rayo_status rayo_json_parse(const char *text, size_t size, rayo_arena *arena, ra
 }
 
 const rayo_json *rayo_json_get(const rayo_json *obj, const char *key) {
+  size_t i;
   if (!obj || obj->kind != RAYO_JSON_OBJECT) return NULL;
-  for (size_t i = 0; i < obj->length; i++) {
+  for (i = 0; i < obj->length; i++) {
     if (strcmp(obj->keys[i], key) == 0) return obj->items[i];
   }
   return NULL;
 }
 
-bool rayo_json_as_int(const rayo_json *v, int64_t *out) {
-  if (!v || v->kind != RAYO_JSON_NUMBER) return false;
-  double d = v->number;
-  if (d != floor(d) || d < -9.0e15 || d > 9.0e15) return false;
-  *out = (int64_t)d;
-  return true;
+rayo_bool rayo_json_as_int(const rayo_json *v, rayo_i32 *out) {
+  double d;
+  if (!v || v->kind != RAYO_JSON_NUMBER) return RAYO_FALSE;
+  d = v->number;
+  if (d != floor(d) || d < -2147483647.0 || d > 2147483647.0) return RAYO_FALSE;
+  *out = (rayo_i32)d;
+  return RAYO_TRUE;
 }
 
 const char *rayo_json_as_string(const rayo_json *v) {

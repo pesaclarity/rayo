@@ -2,8 +2,6 @@
 #ifndef RAYO_SESSION_INTERNAL_H
 #define RAYO_SESSION_INTERNAL_H
 
-#include <stdint.h>
-
 #include "core/arena.h"
 #include "core/tensor.h"
 #include "graph/plan.h"
@@ -17,7 +15,7 @@ struct rayo_session {
   unsigned char *memory; /* owned: the planned arena, one allocation */
   rayo_arena book;       /* owns the plan and the tensor tables */
   rayo_plan plan;
-  int64_t symbols[RAYO_MAX_SYMBOLS];
+  rayo_i32 symbols[RAYO_MAX_SYMBOLS];
   rayo_values values; /* current shapes; data in `memory` */
   size_t *planned;    /* each node's bytes as planned: no bind may exceed them */
 };

@@ -3,7 +3,6 @@
 #define RAYO_MODEL_INTERNAL_H
 
 #include <stddef.h>
-#include <stdint.h>
 
 #include "core/arena.h"
 #include "format/pcwt.h"
@@ -11,7 +10,7 @@
 #include "rayo/model.h"
 
 struct rayo_model {
-  uint8_t *file; /* owned, RAYO_ALIGN-aligned copy; the weights point into it */
+  rayo_u8 *file; /* owned, RAYO_ALIGN-aligned copy; the weights point into it */
   size_t file_size;
   rayo_arena arena; /* owns the header, the graph and the packed weights */
   rayo_pcwt pcwt;
