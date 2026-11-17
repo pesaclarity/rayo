@@ -167,15 +167,20 @@ def test_decline_one_to_one(lib, why, kwargs, expect):
     np.testing.assert_allclose(s.output(0).reshape(t, vocab), want, atol=2e-5)
 
 
-def test_decline_varying_scale():
-    t = 8
-    raw = models.decoder(t, vocab=12, style="fused", layers=1, int8=False,
+def test_decline_varying_scale(lib):
+    """A scale that is not one number: declined, and the fused qkv layout converted op by op
+    (its rank-5 transpose sunk below the slices)."""
+    t, vocab = 8, 12
+    raw = models.decoder(t, vocab=vocab, style="fused", layers=1, int8=False,
                          mask=models.causal_mask(t), scale=np.arange(1, 9, dtype=np.float32))
-    with pytest.raises(ConvertError) as e:
-        convert(raw, "m.tflite")
-    msg = str(e.value)
-    assert "a constant that varies" in msg
-    assert "rank 5" in msg  # its one-to-one form needs a rank-5 transpose: refused, named
+    s, r = session(lib, raw)
+    assert r.mode == "fixed"
+    assert any("a constant that varies" in n for n in r.notes)
+    assert "attention" not in ops_of(r) and "transpose" in ops_of(r)
+    tokens = np.asarray(np.random.default_rng(4).integers(1, vocab, t), np.int32)
+    s.run([tokens])
+    want = reference(raw, tokens)[0].reshape(t, vocab)
+    np.testing.assert_allclose(s.output(0).reshape(t, vocab), want, atol=2e-5, rtol=1e-5)
 
 
 def test_fused_with_mask_and_scale_attribute(lib):

@@ -99,6 +99,8 @@ def convert(raw: bytes, file_name: str, options: Options | None = None) -> Resul
                       f"{blk.head_size}, {'causal' if blk.causal else 'not causal'}, scale "
                       f"{float(scale):g}{' (1/sqrt(head size))' if scale == default else ''}")
         passes._dead(g)
+    passes.sink_slices(g, sh)
+    passes.simplify(g, sh, notes)
     # Outputs: which, in what order, named how.
     if opts.outputs:
         by_name = {v: k for k, v in out_names.items()}

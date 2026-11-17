@@ -553,3 +553,60 @@ def _last_axis(g: Graph, sh: dict[int, tuple[int, ...]], o: Op) -> bool:
         return False
     rank = len(sh[o.inputs[0]])
     return int(axes.reshape(-1)[0]) % rank == rank - 1 and bool(o.options.get("keep_dims"))
+
+
+def sink_slices(g: Graph, sh: dict[int, tuple[int, ...]]) -> None:
+    """A TRANSPOSE read only by slices becomes, for each slice, the slice of its input and a
+    transpose of that: the same values, and no tensor of the transposed rank (a fused qkv
+    projection's [3, 1, H, T, d], which rayo could not hold, becomes three [H, T, d])."""
+    for t in [o for o in g.ops if o.kind == "TRANSPOSE"]:
+        if t not in g.ops or const_value(g, t.inputs[1]) is None:
+            continue
+        users = [u for u in g.ops if t.outputs[0] in u.inputs]
+        if not users or t.outputs[0] in g.outputs or any(
+                u.kind != "STRIDED_SLICE" or u.inputs[0] != t.outputs[0]
+                or any(const_value(g, i) is None for i in u.inputs[1:]) for u in users):
+            continue
+        perm = [int(p) for p in const_value(g, t.inputs[1]).reshape(-1)]
+        src = sh[t.inputs[0]]
+        out = sh[t.outputs[0]]
+        new_ops: list[tuple[Op, list[Op]]] = []
+        for u in users:
+            vals = [[int(v) for v in g.tensors[i].data.reshape(-1)] for i in u.inputs[1:]]
+            try:
+                spec, shrink = ref.strided_slice_spec(out, *vals, u.options)
+            except ConvertError:
+                break
+            if any(s.step not in (None, 1) for s in spec):
+                break
+            begin = [0] * len(src)
+            end = list(src)
+            for a, s in enumerate(spec):
+                b, e, _ = s.indices(out[a])
+                begin[perm[a]], end[perm[a]] = b, e
+            x = t.inputs[0]
+            part_shape = tuple(e - b for b, e in zip(begin, end, strict=True))
+            part = g.add_tensor(g.tensors[u.outputs[0]].name + "/part", g.tensors[x].dtype,
+                                part_shape)
+            sh[part] = part_shape
+            sl = Op(u.index, "STRIDED_SLICE",
+                    [x, g.add_const(f"{g.tensors[part].name}/begin", np.asarray(begin, np.int32)),
+                     g.add_const(f"{g.tensors[part].name}/end", np.asarray(end, np.int32)),
+                     g.add_const(f"{g.tensors[part].name}/strides",
+                                 np.ones(len(src), np.int32))], [part], {})
+            moved_shape = tuple(part_shape[p] for p in perm)
+            moved = g.add_tensor(g.tensors[u.outputs[0]].name + "/moved", g.tensors[x].dtype,
+                                 moved_shape)
+            sh[moved] = moved_shape
+            tr = Op(t.index, "TRANSPOSE", [part, t.inputs[1]], [moved], {})
+            rs = Op(u.index, "RESHAPE",
+                    [moved, g.add_const(g.tensors[u.outputs[0]].name + "/shape",
+                                        np.asarray(sh[u.outputs[0]], np.int32))],
+                    list(u.outputs), {})
+            new_ops.append((u, [sl, tr, rs]))
+            del shrink
+        else:
+            for u, ops in new_ops:
+                at = g.ops.index(u)
+                g.ops[at : at + 1] = ops
+            g.ops.remove(t)

@@ -112,7 +112,7 @@ off), so a file reads `conv_1.kernel`, `conv_1.bias`, `token_embedding.table`,
 | the layer norm pattern below | `layer_norm` |
 | `CONCATENATION` (innermost axis) | `concat` |
 | `RESHAPE`, `EXPAND_DIMS`, `SQUEEZE` | `reshape`, or nothing when only leading ones change |
-| `TRANSPOSE` | `transpose` |
+| `TRANSPOSE` | `transpose` (read only by slices: each slice taken first) |
 | `STRIDED_SLICE` (step 1), `SLICE`, `SPLIT`, `SPLIT_V` | `slice` |
 | `BATCH_MATMUL` | `matmul`, or `attention` (below) |
 | `GREATER`, `GREATER_EQUAL`, `LESS`, `LESS_EQUAL`, `EQUAL`, `NOT_EQUAL` against a number; `CAST` of the result to float | `compare` (rayo's comparisons give float 0 or 1) |
@@ -254,8 +254,11 @@ is its own position. So these all fit, and any other layout of the same kind:
   padding mask from an input, extra ops in the path) is noted, `attention not rewritten:
   <why>; its ops are converted one by one`: `matmul`, `mul`, `add`, `softmax`, `transpose`,
   `reshape`, `slice`. This is the whole-sequence graph (every position recomputed at each
-  step), with the source's numbers. If one of those ops cannot be converted either (a rank-5
-  transpose, say: the fused `qkv` layout), the conversion fails, naming it.
+  step), with the source's numbers. A transpose read only by slices (the fused `qkv` layout's
+  `[3, 1, H, T, d]`, a rank rayo cannot hold) becomes, per slice, the slice of its input and a
+  transpose of that. If an op cannot be converted at all, the conversion fails, naming it.
+  The Ask writer converted so (`--no-attention`) still gives TFLite's next token at every
+  recorded step, at about 5 ms a step instead of 0.09 ms with the cache.
 - **When decoding is declined** for any reason, the note says why and the graph runs the
   whole sequence: bind `T` to the tokens so far and run them all at every step, reading the
   last row. Never a silent rewrite: the converter rewrites only what passes every check above.

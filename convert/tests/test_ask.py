@@ -126,3 +126,24 @@ def test_writer_decodes_with_cache(lib, writer):
     assert steps == 2243 and same == steps
     assert worst < 0.2
     assert identical == steps
+
+
+def test_writer_one_to_one(lib):
+    """With the attention left as TFLite has it (--no-attention): the whole sequence at every
+    step, op by op, and still TFLite's next token (on the first 20 recorded replies)."""
+    r = convert_file(ASK / "ask-writer.tflite",
+                     Options(name="ask-writer", rename={"output_0": "logits"}, attention=False))
+    assert r.mode == "fixed" and "attention" not in [n["op"] for n in r.graph["nodes"]]
+    s = Session(Model(lib, r.data))
+    seqs = json.loads((ASK / "ask_writer_tflite.json").read_text())["sequences"][:20]
+    steps = same = 0
+    for q in seqs:
+        toks, n0 = q["tokens"][:64], q["prefix"]
+        for j, want in enumerate(q["argmax"]):
+            p = n0 - 1 + j
+            x = np.zeros(64, np.int32)
+            x[: p + 1] = toks[: p + 1]
+            s.run([x])
+            steps += 1
+            same += int(s.output(0).reshape(64, -1)[p].argmax() == want)
+    assert same == steps > 200
