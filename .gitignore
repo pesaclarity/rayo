@@ -1,0 +1,5 @@
+.dart_tool/
+build/
+pubspec.lock
+*.so
+__pycache__/

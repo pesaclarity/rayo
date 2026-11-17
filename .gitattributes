@@ -1,0 +1,2 @@
+*.gguf binary
+third_party/** -diff linguist-vendored

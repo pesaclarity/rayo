@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Everything CI would check: the vendored ggml is what PIN says, the test models are what
+# the generator writes, formatting, analysis and the tests (which compile the native library
+# for this computer through the build hook).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "== vendored ggml"
+(cd third_party/ggml && sha256sum --quiet -c SHA256SUMS)
+unlisted=$(cd third_party/ggml && find . -type f ! -name SHA256SUMS | LC_ALL=C sort |
+  comm -23 - <(awk '{print $2}' SHA256SUMS | LC_ALL=C sort))
+if [ -n "$unlisted" ]; then
+  echo "files not in third_party/ggml/SHA256SUMS: $unlisted" >&2
+  exit 1
+fi
+
+echo "== test models"
+python3 tool/make_test_models.py >/dev/null
+git diff --quiet -- test/models || { echo "test/models differ from tool/make_test_models.py" >&2; exit 1; }
+
+echo "== format"
+dart format --output=none --set-exit-if-changed lib test hook
+
+echo "== analyze"
+dart analyze --fatal-infos
+
+echo "== test"
+dart test
