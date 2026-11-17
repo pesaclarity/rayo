@@ -9,7 +9,11 @@ cc=${1:-cc}
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 echo "== examples: classifier, $cc"
+# NumPy's sums may round differently on another CPU, so expected.json is
+# kept as committed; the C program is checked against it to 1e-5.
+cp examples/classifier/expected.json "$out/expected.json"
 python3 examples/classifier/make_model.py
+cp "$out/expected.json" examples/classifier/expected.json
 git diff --exit-code --stat -- examples/classifier
 # shellcheck disable=SC2046
 "$cc" "${C89_FLAGS[@]}" "${INCLUDES[@]}" -O2 $(lib_sources) examples/classifier/classify.c -lm \
