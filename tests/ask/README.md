@@ -8,7 +8,13 @@ The Pesa Clarity app's Ask reader and writer, as rayo runs them, and what TFLite
 | `ask-writer.weights` | `akili ask-writer-weights` on the released `ask-writer.tflite` (sha256 `3461c243…`) |
 | `ask_reader_decodes.json` | pesaclarity-app `test/fixtures/ask/`: TFLite's outputs for 30 questions |
 | `ask_writer_decodes.json` | pesaclarity-app `test/fixtures/ask/`: TFLite's sampled replies to the app's requests |
+| `ask-reader.tflite` | the released Ask reader, pesaclarity-app `assets/models/ask/ask-reader.tflite` at commit `d341889` (sha256 `f6652fa7…`, 271904 bytes) |
+| `ask-writer.tflite` | the released Ask writer, pesaclarity-app `assets/models/ask/ask-writer.tflite` before commit `5a3b5ce` (sha256 `3461c243…`, 652968 bytes) |
 | `ask_writer_tflite.json` | TFLite (XNNPACK, two threads, as the recordings) fed each recorded reply token by token: the next-token argmax and its logit at every step |
+
+`tool/ci/convert.sh` converts the two TFLite files with rayo-convert (docs/CONVERTING.md) and
+runs the same checks on what it writes; `convert/tests/test_ask.py` also checks the converted
+weights are the `.weights` files' byte for byte, and the writer's logits are theirs bit for bit.
 
 `tests/test_ask.c` checks rayo against them: the reader's every label and probabilities within
 1e-4, the writer's next-token choice at every step and its top logit within 0.2. The programs in
@@ -16,4 +22,4 @@ The Pesa Clarity app's Ask reader and writer, as rayo runs them, and what TFLite
 
 The weights are the Pesa Clarity Ask reader and writer, by the Pesa Clarity project, licensed
 under CC BY-SA 4.0 (pesaclarity-ml `MODEL-WEIGHTS.md` and `LICENSE-WEIGHTS`), trained on
-synthetic data only; they are copied here unchanged apart from the graph field.
+synthetic data only; they are copied here unchanged apart from the graph field, and the TFLite files unchanged.

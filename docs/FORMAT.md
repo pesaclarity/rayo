@@ -4,7 +4,8 @@ A rayo model is a **plain-weights file** (PCWT, version 1), the format pesaclari
 for the app's models ([pesaclarity-ml docs/WEIGHTS.md](https://github.com/pesaclarity/pesaclarity-ml/blob/dev/docs/WEIGHTS.md)),
 whose JSON header also holds a **`graph`**: the ops that run the tensors. The graph is an
 optional header field, which version 1 allows ("unknown header fields are ignored"), so one
-file serves rayo and any other reader of version 1 alike.
+file serves rayo and any other reader of version 1 alike. `rayo-convert` writes one from a
+TFLite or ONNX model ([CONVERTING.md](CONVERTING.md)).
 
 ```
 "PCWT" | uint32 version (1) | uint32 header length H | UTF-8 JSON header (H bytes) | tensors

@@ -4,3 +4,5 @@ pubspec.lock
 *.so
 *.o
 __pycache__/
+*.egg-info/
+.pytest_cache/
