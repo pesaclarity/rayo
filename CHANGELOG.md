@@ -4,5 +4,9 @@ Written from the conventional commit titles on `main` at each release.
 
 ## Unreleased
 
-- First version: the graph runtime on ggml 1.0.0 (CPU), the Dart API, the build hook and
-  the model format (docs/FORMAT.md, version 1).
+- rayo is its own engine in plain C11: ggml is gone. Models are plain-weights (PCWT) files
+  with a graph in the header (docs/FORMAT.md); int8 layers run as TFLite's dynamic-range
+  kernels do. Kernels: generic C, SSE4.1/AVX2, AVX-VNNI, NEON and SDOT.
+- A session plans its memory once; a run allocates nothing.
+- The Dart API is split into bindings, model, session and an isolate runner; inputs and outputs
+  are views of native memory.
