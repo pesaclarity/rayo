@@ -16,6 +16,13 @@ typedef struct rayo_size_attr {
   rayo_i32 symbol; /* >= 0: the symbol's current value instead */
 } rayo_size_attr;
 
+/* A list attribute of sizes (reshape's shape, slice's begin and size,
+ * transpose's perm): at most RAYO_MAX_RANK of them. */
+typedef struct rayo_sizes_attr {
+  rayo_i32 count;
+  rayo_size_attr items[RAYO_MAX_RANK];
+} rayo_sizes_attr;
+
 /* The size now: the number, or the symbol's current value. */
 rayo_i32 rayo_size_value(rayo_size_attr a, const rayo_i32 *symbols);
 
@@ -31,6 +38,12 @@ rayo_status rayo_attr_float(const rayo_op_spec *spec, const char *key, float fal
  * `fallback` when absent. */
 rayo_status rayo_attr_size(const rayo_op_spec *spec, const char *key, rayo_i32 fallback,
                            rayo_size_attr *out, rayo_message *msg);
+
+/* Attribute `key` as a list of at most RAYO_MAX_RANK sizes, each a whole
+ * number from `lo` (-1 or 0) to RAYO_MAX_DIM or a size symbol's name. It
+ * must be there. */
+rayo_status rayo_attr_sizes(const rayo_op_spec *spec, const char *key, rayo_i32 lo,
+                            rayo_sizes_attr *out, rayo_message *msg);
 
 /* "activation": "none" (or absent), "relu" or "gelu_erf". */
 rayo_status rayo_attr_activation(const rayo_op_spec *spec, rayo_activation *out, rayo_message *msg);

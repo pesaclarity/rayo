@@ -167,6 +167,93 @@ void test_masked_reduce(void) {
   EXPECT(load(g, NULL) == NULL);
 }
 
+/* One node `op` over inputs "a" [2, 3] and "b" (shape `b`), attributes
+ * `attrs` (JSON, may be empty); "w" names the weight, if `w` is given. */
+static rayo_model *one_node(const char *op, const char *inputs, const char *b, const char *attrs,
+                            const float *w, size_t nw) {
+  char g[2048];
+  size_t size;
+  unsigned char *file;
+  rayo_model *m = NULL;
+  rayo_message msg;
+  sprintf(g,
+          "{\"version\":1,\"inputs\":[{\"name\":\"a\",\"dtype\":\"float32\",\"shape\":[2,3]},"
+          "{\"name\":\"b\",\"dtype\":\"float32\",\"shape\":%s}],\"nodes\":[{\"op\":\"%s\","
+          "\"inputs\":%s,\"output\":\"y\"%s%s}],\"outputs\":[{\"name\":\"y\",\"node\":\"y\"}]}",
+          b, op, inputs, *attrs ? "," : "", attrs);
+  file = model_file(g, w, nw, &size);
+  if (!file) return NULL;
+  if (rayo_model_create(file, size, &m, &msg) != RAYO_OK) fprintf(stderr, "  %s\n", msg.text);
+  free(file);
+  return m;
+}
+
+static void expect_one(const char *op, const char *inputs, const char *b_shape, const char *attrs,
+                       const float *b, size_t nb, const float *want, size_t nw) {
+  static const float a[] = {1, -2, 3, 4, 0.5f, -6};
+  static const float w[] = {2, -1, 0.5f};
+  rayo_model *m = one_node(op, inputs, b_shape, attrs, w, 3);
+  expect_run(m, a, 6, b, nb, want, nw);
+  rayo_model_destroy(m);
+}
+
+/* The general ops a converted model uses: elementwise with broadcasting,
+ * reductions, reshape, transpose, slice and matmul. a is
+ * [[1, -2, 3], [4, 0.5, -6]]. */
+void test_general_ops(void) {
+  static const float row[] = {10, 20, 30}, col[] = {2, 4};
+  static const float add_row[] = {11, 18, 33, 14, 20.5f, 24};
+  static const float sub_col[] = {-1, -4, 1, 0, -3.5f, -10};
+  static const float mul_w[] = {2, 2, 1.5f, 8, -0.5f, -3};
+  static const float div_col[] = {0.5f, -1, 1.5f, 1, 0.125f, -1.5f};
+  static const float max_row[] = {10, 20, 30, 10, 20, 30}, min_col[] = {1, -2, 2, 4, 0.5f, -6};
+  static const float sqd_row[] = {81, 484, 729, 36, 380.25f, 1296};
+  static const float relu[] = {1, 0, 3, 4, 0.5f, 0}, neg[] = {-1, 2, -3, -4, -0.5f, 6};
+  static const float square[] = {1, 4, 9, 16, 0.25f, 36}, absv[] = {1, 2, 3, 4, 0.5f, 6};
+  static const float sum0[] = {5, -1.5f, -3}, mean1[] = {2.0f / 3.0f, -0.5f};
+  static const float max1[] = {3, 4}, min0[] = {1, -2, -6};
+  static const float a[] = {1, -2, 3, 4, 0.5f, -6};
+  static const float t[] = {1, 4, -2, 0.5f, 3, -6}, sl[] = {-2, 3, 0.5f, -6};
+  static const float bm[] = {1, 0, 0, 1, 1, 1}, ab[] = {4, 1, -2, -5.5f};
+  rayo_model *m;
+  expect_one("add", "[\"a\",\"b\"]", "[3]", "", row, 3, add_row, 6);
+  expect_one("sub", "[\"a\",\"b\"]", "[2,1]", "", col, 2, sub_col, 6);
+  expect_one("mul", "[\"a\",\"w\"]", "[1]", "", row, 1, mul_w, 6);
+  expect_one("div", "[\"a\",\"b\"]", "[2,1]", "", col, 2, div_col, 6);
+  expect_one("maximum", "[\"a\",\"b\"]", "[3]", "", row, 3, max_row, 6);
+  expect_one("minimum", "[\"b\",\"a\"]", "[2,1]", "", col, 2, min_col, 6);
+  expect_one("squared_difference", "[\"a\",\"b\"]", "[3]", "", row, 3, sqd_row, 6);
+  expect_one("relu", "[\"a\"]", "[1]", "", row, 1, relu, 6);
+  expect_one("neg", "[\"a\"]", "[1]", "", row, 1, neg, 6);
+  expect_one("square", "[\"a\"]", "[1]", "", row, 1, square, 6);
+  expect_one("abs", "[\"a\"]", "[1]", "", row, 1, absv, 6);
+  expect_one("reduce", "[\"a\"]", "[1]", "\"reduction\":\"sum\",\"axis\":0", row, 1, sum0, 3);
+  expect_one("reduce", "[\"a\"]", "[1]", "\"reduction\":\"mean\",\"keepdims\":1", row, 1, mean1, 2);
+  expect_one("reduce", "[\"a\"]", "[1]", "\"reduction\":\"max\",\"axis\":1", row, 1, max1, 2);
+  expect_one("reduce", "[\"a\"]", "[1]", "\"reduction\":\"min\",\"axis\":-2", row, 1, min0, 3);
+  expect_one("reshape", "[\"a\"]", "[1]", "\"shape\":[3,-1]", row, 1, a, 6);
+  expect_one("transpose", "[\"a\"]", "[1]", "\"perm\":[1,0]", row, 1, t, 6);
+  expect_one("slice", "[\"a\"]", "[1]", "\"begin\":[0,1],\"size\":[2,-1]", row, 1, sl, 4);
+  /* a [2, 3] times b [3, 2], and a times aᵀ through transpose_b. */
+  expect_one("matmul", "[\"a\",\"b\"]", "[3,2]", "", bm, 6, ab, 4);
+  {
+    static const float aat[] = {14, -15, -15, 52.25f};
+    expect_one("matmul", "[\"a\",\"a\"]", "[1]", "\"transpose_b\":1", row, 1, aat, 4);
+  }
+  /* Shapes that do not fit are refused when the session plans them. */
+  m = one_node("add", "[\"a\",\"b\"]", "[2]", "", NULL, 0);
+  EXPECT(m != NULL);
+  if (m) {
+    rayo_session *s = NULL;
+    EXPECT(rayo_session_create(m, &s, NULL) != RAYO_OK);
+    rayo_session_destroy(s);
+  }
+  rayo_model_destroy(m);
+  EXPECT(one_node("reshape", "[\"a\"]", "[1]", "\"shape\":[-1,-1]", NULL, 0) == NULL);
+  EXPECT(one_node("transpose", "[\"a\"]", "[1]", "\"perm\":[0,0]", NULL, 0) == NULL);
+  EXPECT(one_node("reduce", "[\"a\"]", "[1]", "\"reduction\":\"median\"", NULL, 0) == NULL);
+}
+
 /* A program's own op: y = x * scale + w, with "scale" an attribute and w
  * a weight the size of x. */
 typedef struct axpy_params {
