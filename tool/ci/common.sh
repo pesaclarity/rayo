@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Sourced by tool/check and the CI jobs: the C flags rayo is built with, and
 # helpers. Everything rayo compiles is strict C89.
 set -euo pipefail
@@ -22,9 +23,11 @@ can_wrap() {
 build_tests() {
   local cc=$1 out=$2
   shift 2
-  local wrap=()
+  # Never empty: bash 3.2 (macOS) treats an empty array as unset under set -u.
+  local wrap=(-lm)
   if can_wrap; then
-    wrap=(-DRAYO_TEST_COUNT_ALLOCS -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc)
+    # shellcheck disable=SC2054
+    wrap+=(-DRAYO_TEST_COUNT_ALLOCS -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc)
   fi
   # shellcheck disable=SC2046
   "$cc" "${C89_FLAGS[@]}" "${INCLUDES[@]}" -Itests "$@" $(lib_sources) tests/*.c -lm \

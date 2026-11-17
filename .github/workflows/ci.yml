@@ -99,7 +99,8 @@ jobs:
       - name: Cross compiler and QEMU
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends gcc-arm-linux-gnueabihf qemu-user
+          sudo apt-get install -y -q --no-install-recommends gcc-arm-linux-gnueabihf \
+            libc6-dev-armhf-cross qemu-user
       - name: Tests under QEMU, NEON
         run: |
           out=$(mktemp -d)
