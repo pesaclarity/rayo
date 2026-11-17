@@ -20,6 +20,12 @@ bool rayoAvailable() {
 /// The library's version, such as `0.1.0`.
 String rayoVersion() => cString(c.rayo_version_string());
 
+/// The ops rayo has built in (docs/OPS.md), such as `dense`.
+List<String> rayoBuiltinOps() => [
+  for (var i = 0; c.rayo_op_builtin(i) != nullptr; i++)
+    cString(c.rayo_op_builtin(i)),
+];
+
 /// Lower-case hex SHA-256 of [bytes], computed natively.
 String rayoSha256(Uint8List bytes) => using((arena) {
   final data = arena<Uint8>(bytes.isEmpty ? 1 : bytes.length);

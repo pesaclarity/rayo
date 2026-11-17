@@ -1,7 +1,7 @@
 name: rayo
 description: >-
-  On-device inference for Dart and Flutter on ggml, compiled from source by a
-  build hook: no prebuilt native libraries.
+  On-device inference for Dart and Flutter in plain C89, compiled from source
+  by a build hook: no prebuilt native libraries.
 version: 0.1.0
 repository: https://github.com/pesaclarity/rayo
 publish_to: none

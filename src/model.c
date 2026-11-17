@@ -6,11 +6,13 @@
 #include "core/alloc.h"
 #include "core/message.h"
 
-static rayo_status read_header(rayo_model *m, rayo_message *msg) {
+static rayo_status read_header(rayo_model *m, const rayo_model_options *options,
+                               rayo_message *msg) {
   const rayo_json *meta;
   rayo_status s = rayo_pcwt_read(m->file, m->file_size, &m->arena, &m->pcwt, msg);
   if (s != RAYO_OK) return s;
-  s = rayo_graph_read(rayo_json_get(m->pcwt.header, "graph"), &m->pcwt, &m->arena, &m->graph, msg);
+  s = rayo_graph_read(rayo_json_get(m->pcwt.header, "graph"), &m->pcwt, options, &m->arena,
+                      &m->graph, msg);
   if (s != RAYO_OK) return s;
   meta = rayo_json_get(m->pcwt.header, "metadata");
   if (meta && meta->kind != RAYO_JSON_OBJECT) {
@@ -23,9 +25,16 @@ static rayo_status read_header(rayo_model *m, rayo_message *msg) {
 }
 
 rayo_status rayo_model_create(const void *data, size_t size, rayo_model **out, rayo_message *msg) {
+  return rayo_model_create_with(data, size, NULL, out, msg);
+}
+
+rayo_status rayo_model_create_with(const void *data, size_t size, const rayo_model_options *options,
+                                   rayo_model **out, rayo_message *msg) {
   rayo_model *m;
   rayo_status s;
-  if (!out || (!data && size)) return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "null argument");
+  if (!out || (!data && size) || (options && options->op_count > 0 && !options->ops)) {
+    return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "null argument");
+  }
   *out = NULL;
   if (size == 0) return rayo_fail(msg, RAYO_ERR_FORMAT, "an empty file");
   m = calloc(1, sizeof *m);
@@ -38,7 +47,7 @@ rayo_status rayo_model_create(const void *data, size_t size, rayo_model **out, r
   }
   memcpy(m->file, data, size);
   m->file_size = size;
-  s = read_header(m, msg);
+  s = read_header(m, options, msg);
   if (s != RAYO_OK) {
     rayo_model_destroy(m);
     return s;

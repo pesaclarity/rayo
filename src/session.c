@@ -15,7 +15,9 @@ static rayo_status plan(rayo_session *s, rayo_message *msg) {
   v->inputs = rayo_arena_array(&s->book, (size_t)g->input_count, sizeof *v->inputs);
   v->states = rayo_arena_array(&s->book, (size_t)g->state_count + 1, sizeof *v->states);
   v->nodes = rayo_arena_array(&s->book, (size_t)g->node_count, sizeof *v->nodes);
-  if (!v->inputs || !v->states || !v->nodes) {
+  v->args = rayo_arena_array(&s->book, (size_t)g->max_node_inputs + 1, sizeof *v->args);
+  s->symbols = rayo_arena_array(&s->book, (size_t)g->symbol_count + 1, sizeof *s->symbols);
+  if (!v->inputs || !v->states || !v->nodes || !v->args || !s->symbols) {
     return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   }
   for (i = 0; i < g->symbol_count; i++) s->symbols[i] = g->symbol_plan[i];
@@ -129,10 +131,9 @@ rayo_status rayo_session_run(rayo_session *session, rayo_message *msg) {
   exec.symbols = session->symbols;
   for (i = 0; i < g->node_count; i++) {
     const rayo_node *n = &g->nodes[i];
-    rayo_tensor args[RAYO_MAX_INPUTS];
     rayo_status st;
-    rayo_graph_node_inputs(g, &session->model->pcwt, i, &session->values, args);
-    st = n->op->run(n->params, args, &session->values.nodes[i], &exec);
+    rayo_graph_node_inputs(g, &session->model->pcwt, i, &session->values, session->values.args);
+    st = n->op->run(n->params, session->values.args, &session->values.nodes[i], &exec);
     if (st != RAYO_OK) {
       return rayo_fail(msg, st, "node %s: %s", n->output,
                        st == RAYO_ERR_SHAPE ? "an id out of range" : rayo_status_str(st));

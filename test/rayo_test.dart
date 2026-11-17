@@ -33,6 +33,10 @@ void main() {
   test('loads the native library', () {
     expect(rayoAvailable(), isTrue);
     expect(rayoVersion(), '0.1.0');
+    expect(
+      rayoBuiltinOps(),
+      containsAll(['dense', 'compare', 'masked_reduce']),
+    );
   });
 
   test('SHA-256', () {

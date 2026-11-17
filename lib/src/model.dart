@@ -56,7 +56,7 @@ class RayoModel {
   final Pointer<c.RayoModelHandle> _handle;
   bool _closed = false;
 
-  /// The header's "model", such as `ask-reader`.
+  /// The header's "model", such as `example-classifier`.
   final String name;
 
   /// The header's "metadata" object.

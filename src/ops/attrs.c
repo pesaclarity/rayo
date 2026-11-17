@@ -32,6 +32,24 @@ rayo_status rayo_attr_float(const rayo_op_spec *spec, const char *key, float fal
   return RAYO_OK;
 }
 
+rayo_status rayo_attr_double(const rayo_op_spec *spec, const char *key, double fallback,
+                             double *out, rayo_message *msg) {
+  const rayo_json *v = rayo_json_get(spec->json, key);
+  if (!v) {
+    *out = fallback;
+    return RAYO_OK;
+  }
+  if (v->kind != RAYO_JSON_NUMBER) {
+    return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: %s must be a number", spec->output, key);
+  }
+  *out = v->number;
+  return RAYO_OK;
+}
+
+rayo_bool rayo_attr_has(const rayo_op_spec *spec, const char *key) {
+  return rayo_json_get(spec->json, key) != NULL;
+}
+
 rayo_status rayo_attr_string(const rayo_op_spec *spec, const char *key, const char *fallback,
                              const char **out, rayo_message *msg) {
   const rayo_json *v = rayo_json_get(spec->json, key);
@@ -78,7 +96,7 @@ rayo_status rayo_attr_size(const rayo_op_spec *spec, const char *key, rayo_i32 f
     }
     return RAYO_OK;
   }
-  return rayo_attr_int(spec, key, fallback, 0, 1 << 24, &out->value, msg);
+  return rayo_attr_int(spec, key, fallback, 0, (rayo_i32)RAYO_MAX_DIM, &out->value, msg);
 }
 
 rayo_i32 rayo_size_value(rayo_size_attr a, const rayo_i32 *symbols) {

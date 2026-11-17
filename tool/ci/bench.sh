@@ -8,8 +8,8 @@ cc=${1:-cc}
 shift || true
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
-build_tool "$cc" ask_reader_check "$out/reader" -O3 "$@"
-build_tool "$cc" ask_writer_bench "$out/writer" -O3 "$@"
+build_tool "$cc" examples/ask/ask_reader_check.c "$out/reader" -O3 "$@"
+build_tool "$cc" examples/ask/ask_writer_bench.c "$out/writer" -O3 "$@"
 rows=()
 for k in generic simd best; do
   r=$("$out/reader" tests/ask/ask-reader.weights tests/ask/ask_reader_decodes.json 100 "$k")

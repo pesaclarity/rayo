@@ -27,13 +27,20 @@ rayo_status rayo_attr_int(const rayo_op_spec *spec, const char *key, rayo_i32 fa
 rayo_status rayo_attr_float(const rayo_op_spec *spec, const char *key, float fallback, float *out,
                             rayo_message *msg);
 
-/* Attribute `key` as a whole number (0 to 1 << 24) or a symbol's name;
+/* Attribute `key` as a whole number (0 to RAYO_MAX_DIM) or a symbol's name;
  * `fallback` when absent. */
 rayo_status rayo_attr_size(const rayo_op_spec *spec, const char *key, rayo_i32 fallback,
                            rayo_size_attr *out, rayo_message *msg);
 
 /* "activation": "none" (or absent), "relu" or "gelu_erf". */
 rayo_status rayo_attr_activation(const rayo_op_spec *spec, rayo_activation *out, rayo_message *msg);
+
+/* Attribute `key` as a number in double, or `fallback` when absent. */
+rayo_status rayo_attr_double(const rayo_op_spec *spec, const char *key, double fallback,
+                             double *out, rayo_message *msg);
+
+/* Whether attribute `key` is there. */
+rayo_bool rayo_attr_has(const rayo_op_spec *spec, const char *key);
 
 /* Attribute `key` as a string, or `fallback` when absent. */
 rayo_status rayo_attr_string(const rayo_op_spec *spec, const char *key, const char *fallback,

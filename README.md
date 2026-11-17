@@ -2,12 +2,13 @@
 
 [![CI](https://github.com/pesaclarity/rayo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pesaclarity/rayo/actions/workflows/ci.yml)
 
-On-device inference in plain C89 (ANSI C), for Dart and Flutter. Built for
-[Pesa Clarity](https://github.com/pesaclarity), whose small models (a question reader, a reply
-writer) run on the phone, offline, in the Play and the F-Droid builds alike.
+On-device inference in plain C89 (ANSI C), for C, Dart and Flutter. A general runtime for
+small models: a graph of ops (docs/OPS.md) over a plain-weights file, with ops of your own when
+those are not enough. Pesa Clarity's question reader and reply writer run on it, on the phone,
+offline, in the Play and the F-Droid builds alike; nothing in the library is specific to them.
 
-- **Our own engine, no Google code**: no TFLite/LiteRT, no XNNPACK, and no other library. The
-  kernels for exactly the ops our models use, portable C first, SIMD where it pays.
+- **Our own engine, no Google code**: no TFLite/LiteRT, no XNNPACK, and no other library.
+  Portable C first, SIMD where it pays.
 - **Built from source, in C89**: a Dart build hook compiles `src/` with the platform's C
   compiler (the NDK, Xcode, clang/gcc), `-std=c89 -pedantic -Werror`. Nothing is downloaded,
   nothing is prebuilt, so F-Droid builds it offline like the rest of the app. No C++ anywhere.
@@ -64,15 +65,66 @@ owns what; destroy functions accept NULL.
 ## Models
 
 A model is a plain-weights file (PCWT) with its graph in the header:
-[docs/FORMAT.md](docs/FORMAT.md). Pesa Clarity's are written by
-[pesaclarity-ml](https://github.com/pesaclarity/pesaclarity-ml). `tool/make_test_models.py`
-(NumPy only) writes the small random models the tests use, with the outputs NumPy computes.
+[docs/FORMAT.md](docs/FORMAT.md); its ops are in [docs/OPS.md](docs/OPS.md). Pesa Clarity's
+are written by [pesaclarity-ml](https://github.com/pesaclarity/pesaclarity-ml).
+`tool/make_test_models.py` (NumPy only) writes the small random models the tests use, with the
+outputs NumPy computes.
+
+## Using rayo with your own model
+
+`examples/classifier` is a complete one: a bag-of-words classifier over token ids, with
+made-up weights.
+
+1. **Write the file.** `make_model.py` writes `classifier.weights` with `tool/pcwt.py`
+   (NumPy only): the tensors, then a graph that names them.
+
+   ```json
+   "symbols": {"T": 32},
+   "inputs": [{"name": "ids", "dtype": "int32", "shape": ["T"]}],
+   "nodes": [
+     {"op": "gather", "inputs": ["embedding", "ids"], "output": "vectors"},
+     {"op": "compare", "inputs": ["ids"], "output": "real", "comparison": "greater", "value": 0},
+     {"op": "masked_reduce", "inputs": ["vectors", "real"], "output": "mean", "reduction": "mean"},
+     {"op": "dense", "inputs": ["mean", "hidden.kernel", "hidden.bias"], "output": "hidden",
+      "activation": "relu"},
+     {"op": "dense", "inputs": ["hidden", "out.kernel", "out.bias"], "output": "logits"},
+     {"op": "softmax", "inputs": ["logits"], "output": "probabilities"}
+   ],
+   "outputs": [{"name": "probabilities", "node": "probabilities"}]
+   ```
+
+   `hidden.kernel` is int8 (one scale per output), so that layer runs as TFLite's
+   dynamic-range kernels do; the rest are float32.
+
+2. **Run it from C.** `classify.c` loads the file, binds `T` to the number of ids, writes them
+   into the input in place, runs, and reads the probabilities in place:
+   `classify classifier.weights 4 17 9`. `tool/ci/examples.sh` checks it against NumPy in CI.
+
+3. **Or from Dart**, as in [Use](#use): `RayoModel.load(bytes)`, `RayoSession(model)`,
+   `bind('T', ids.length)`, `inputInt32(0).setAll(0, ids)`, `run()`, `outputFloat32(0)`.
+
+**Ops of your own.** If your graph needs an op rayo does not have, write it in C (`prepare`,
+`infer` and `run`; `include/rayo/op.h`) and pass it to `rayo_model_create_with`. See the end
+of docs/OPS.md.
+
+**Limits.** These are read from the file:
+- the number of nodes, inputs, outputs, states and size symbols;
+- a node's inputs, a kernel's size and a convolution's dilation.
+
+Each count is bounded only by overflow checks. The compile-time options are in
+`include/rayo/config.h`, with their defaults:
+- `RAYO_MAX_RANK`: 4;
+- `RAYO_MAX_DIM`: 2^24, the largest dimension;
+- `RAYO_ALIGN`: 64;
+- `RAYO_JSON_MAX_DEPTH`: 32;
+- `RAYO_OP_MAX_INPUTS`: 16, for your own ops.
 
 ## Layout
 
 ```
-include/rayo/     public headers: rayo.h (all of them), types.h, error.h, tensor.h,
-                  model.h, session.h, sha256.h, version.h
+include/rayo/     public headers: rayo.h (all of them), config.h (compile-time options),
+                  types.h, error.h, tensor.h, model.h, session.h, op.h (your own ops),
+                  sha256.h, version.h
 src/core/         allocation, arena, JSON, tensors, messages and formatting, maths, C89 shims
 src/format/       the PCWT reader and its checks
 src/graph/        the graph, shapes and the memory plan
@@ -82,8 +134,9 @@ src/kernels/      generic.c, x86.c (SSE4.1/AVX2), x86_vnni.c, neon.c, neon_dotpr
 src/model.c, src/session.c, src/sha256/
 lib/              the Dart API: bindings/, model.dart, session.dart, isolate_runner.dart, ...
 tests/            the C tests (tests/test_*.c), test models, and the real Ask models (tests/ask)
-tools/            ask_reader_check.c: the reader against TFLite's recorded outputs, timed;
-                  ask_writer_bench.c: the writer decoding the recorded replies, timed
+tools/            bench.c: timing helpers for programs that time a model, op by op
+examples/         classifier/: a small model of its own, end to end;
+                  ask/: Pesa Clarity's reader and writer against TFLite's recordings, timed
 ```
 
 ## Kernels
@@ -127,7 +180,7 @@ for token, and the next-token choice agrees at every step.
 
 For the reader, loading the model takes about 0.2 ms and making a session about 0.15 ms. Memory: the file's
 copy (251 KB), the session's arena (241 KB) and 82 KB of tables. Measured with
-`tools/ask_reader_check.c`, which also prints the time per op. Not yet measured on a phone.
+`examples/ask/ask_reader_check.c`, which also prints the time per op. Not yet measured on a phone.
 
 ## C89
 

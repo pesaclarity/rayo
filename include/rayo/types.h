@@ -8,6 +8,8 @@
 #include <limits.h>
 #include <stddef.h>
 
+#include "rayo/config.h"
+
 typedef signed char rayo_i8;
 typedef unsigned char rayo_u8;
 typedef short rayo_i16;
@@ -34,8 +36,6 @@ typedef char rayo_check_i32[sizeof(rayo_i32) == 4 ? 1 : -1];
 typedef char rayo_check_u32[sizeof(rayo_u32) == 4 ? 1 : -1];
 typedef char rayo_check_f32[sizeof(rayo_f32) == 4 ? 1 : -1];
 typedef char rayo_check_char[CHAR_BIT == 8 ? 1 : -1];
-
-#define RAYO_MAX_RANK 4
 
 typedef enum rayo_dtype { RAYO_DTYPE_F32 = 0, RAYO_DTYPE_I32 = 1, RAYO_DTYPE_I8 = 2 } rayo_dtype;
 

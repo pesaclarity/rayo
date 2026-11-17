@@ -16,6 +16,7 @@ typedef struct rayo_values {
   rayo_tensor *inputs;
   rayo_tensor *states;
   rayo_tensor *nodes;
+  rayo_tensor *args; /* the graph's max_node_inputs: one node's inputs at a time */
 } rayo_values;
 
 typedef struct rayo_plan {
@@ -27,7 +28,7 @@ typedef struct rayo_plan {
   size_t arena_bytes;   /* in all */
 } rayo_plan;
 
-/* The tensors node `index` reads, into `out` (RAYO_MAX_INPUTS of them). */
+/* The tensors node `index` reads, into `out` (its input_count of them). */
 void rayo_graph_node_inputs(const rayo_graph *graph, const rayo_pcwt *weights, rayo_i32 index,
                             const rayo_values *values, rayo_tensor *out);
 

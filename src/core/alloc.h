@@ -5,7 +5,7 @@
 
 #include <stddef.h>
 
-#define RAYO_ALIGN 64
+#include "rayo/config.h"
 
 /* `size` rounded up to a multiple of RAYO_ALIGN; 0 if that overflows. */
 size_t rayo_align_up(size_t size);

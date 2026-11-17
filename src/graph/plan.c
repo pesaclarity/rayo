@@ -51,7 +51,7 @@ static rayo_status node_shape(const rayo_graph *graph, const rayo_pcwt *weights,
                               const rayo_i32 *symbols, rayo_values *values, rayo_i32 i,
                               size_t *need, rayo_message *msg) {
   const rayo_node *n = &graph->nodes[i];
-  rayo_tensor args[RAYO_MAX_INPUTS];
+  rayo_tensor *args = values->args;
   rayo_tensor *t = &values->nodes[i];
   void *data;
   rayo_status s;

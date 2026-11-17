@@ -11,8 +11,7 @@
 #include "core/tensor.h"
 #include "kernels/kernels.h"
 #include "rayo/error.h"
-
-#define RAYO_MAX_INPUTS 4
+#include "rayo/op.h"
 
 typedef struct rayo_op rayo_op;
 
@@ -34,6 +33,7 @@ typedef struct rayo_op_spec {
   const rayo_tensor *inputs; /* weights have `weight` set; activations only a dtype */
   rayo_symbol_fn *symbol;    /* resolves symbols named in attributes */
   const void *graph;
+  const rayo_custom_op *custom; /* for rayo_op_custom: the program's op */
 } rayo_op_spec;
 
 struct rayo_op {
@@ -55,7 +55,10 @@ struct rayo_op {
   rayo_bool aliases_input;
 };
 
-/* The op called `name`, or NULL. */
+/* The built-in op called `name`, or NULL. */
 const rayo_op *rayo_op_find(const char *name);
+
+/* RAYO_OK when `op`, a program's own, can be used. */
+rayo_status rayo_custom_op_check(const rayo_custom_op *op, rayo_message *msg);
 
 #endif

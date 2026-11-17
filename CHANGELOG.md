@@ -4,6 +4,17 @@ Written from the conventional commit titles on `main` at each release.
 
 ## Unreleased
 
+- rayo is a general runtime, with nothing specific to one model:
+  - **Ops:** `compare` and `masked_reduce` replace the Ask reader's `mask`, `masked_max` and
+    `masked_mean`. Graphs that name the old ops must be written again: pesaclarity-ml does
+    this, and `tests/ask` is updated.
+  - **Your own ops:** a program can give rayo ops (`include/rayo/op.h`,
+    `rayo_model_create_with`), and `rayo_op_builtin` lists the built-in ones.
+  - **No hard caps:** a file's counts (nodes, inputs, outputs, states, symbols, node inputs,
+    kernel sizes, dilations) are no longer capped. The remaining limits are compile-time
+    options in `include/rayo/config.h`.
+  - **Docs and examples:** docs/OPS.md documents every op. `examples/classifier` is a model
+    of its own, end to end, and the Ask programs move to `examples/ask`.
 - erf is fdlibm's (`LICENSES/fdlibm.txt`) in place of fitted polynomials, checked on every
   float in [0, 4] against the C library's erf (`tool/ci/erf.sh`, in CI and `tool/check`).
 

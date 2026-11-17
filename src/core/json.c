@@ -6,8 +6,7 @@
 #include <string.h>
 
 #include "core/message.h"
-
-#define RAYO_JSON_DEPTH 32
+#include "rayo/config.h"
 
 typedef struct parser {
   const char *at;
@@ -284,7 +283,7 @@ static rayo_status parse_value(parser *p, int depth, rayo_json **out) {
   rayo_json *v;
   rayo_status s = RAYO_OK;
   char c;
-  if (depth > RAYO_JSON_DEPTH) return fail(p, "nested too deep");
+  if (depth > RAYO_JSON_MAX_DEPTH) return fail(p, "nested too deep");
   skip_ws(p);
   if (p->at >= p->end) return fail(p, "unexpected end");
   v = (rayo_json *)rayo_arena_alloc(p->arena, sizeof *v);

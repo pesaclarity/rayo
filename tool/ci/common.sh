@@ -11,7 +11,7 @@ C89_FLAGS=(-std=c89 -pedantic -Werror -Wall -Wextra -Wconversion -Wshadow
 INCLUDES=(-Iinclude -Isrc)
 
 lib_sources() { find src -name '*.c' | LC_ALL=C sort; }
-c_files() { find include src tests tools -name '*.[ch]' | LC_ALL=C sort; }
+c_files() { find include src tests tools examples -name '*.[ch]' | LC_ALL=C sort; }
 
 # Whether linking with --wrap works here (GNU ld, lld; not Apple's ld64).
 can_wrap() {
@@ -34,13 +34,14 @@ build_tests() {
     "${wrap[@]}" -o "$out"
 }
 
-# build_tool CC NAME OUT [flags...]: a tool from tools/.
+# build_tool CC SOURCE OUT [flags...]: a program (examples/*/*.c) with the
+# timing helpers of tools/.
 build_tool() {
-  local cc=$1 name=$2 out=$3
+  local cc=$1 src=$2 out=$3
   shift 3
   # shellcheck disable=SC2046
   "$cc" "${C89_FLAGS[@]}" "${INCLUDES[@]}" -Itools "$@" $(lib_sources) tools/bench.c \
-    "tools/$name.c" -lm -o "$out"
+    "$src" -lm -o "$out"
 }
 
 # run_tests BINARY: the whole suite with each kernel set the build has.
