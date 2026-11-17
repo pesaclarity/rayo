@@ -19,6 +19,9 @@ void test_golden(void);
 void test_memory(void);
 void test_decoder(void);
 void test_ask(void);
+void test_compare(void);
+void test_masked_reduce(void);
+void test_custom_op(void);
 
 unsigned char *test_read_file(const char *path, size_t *size) {
   FILE *f = fopen(path, "rb");
@@ -75,12 +78,22 @@ typedef struct test_case {
   void (*run)(void);
 } test_case;
 
-static const test_case tests[] = {
-    {"arena", test_arena},     {"json", test_json},     {"format", test_format},
-    {"sha256", test_sha256},   {"erf", test_erf},       {"quantize", test_quantize},
-    {"kernels", test_kernels}, {"pcwt", test_pcwt},     {"plan", test_plan},
-    {"golden", test_golden},   {"memory", test_memory}, {"decoder", test_decoder},
-    {"ask", test_ask}};
+static const test_case tests[] = {{"arena", test_arena},
+                                  {"json", test_json},
+                                  {"format", test_format},
+                                  {"sha256", test_sha256},
+                                  {"erf", test_erf},
+                                  {"quantize", test_quantize},
+                                  {"kernels", test_kernels},
+                                  {"pcwt", test_pcwt},
+                                  {"plan", test_plan},
+                                  {"golden", test_golden},
+                                  {"memory", test_memory},
+                                  {"decoder", test_decoder},
+                                  {"compare", test_compare},
+                                  {"masked_reduce", test_masked_reduce},
+                                  {"custom_op", test_custom_op},
+                                  {"ask", test_ask}};
 
 int main(int argc, char **argv) {
   int ran = 0;

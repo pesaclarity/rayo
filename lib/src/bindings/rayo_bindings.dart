@@ -63,6 +63,9 @@ external Pointer<Uint8> rayo_version_string();
 @Native<Pointer<Uint8> Function(Int32)>(isLeaf: true)
 external Pointer<Uint8> rayo_status_str(int status);
 
+@Native<Pointer<Uint8> Function(Int32)>(isLeaf: true)
+external Pointer<Uint8> rayo_op_builtin(int index);
+
 @Native<Void Function(Pointer<Uint8>, Size, Pointer<Uint8>)>(isLeaf: true)
 external void rayo_sha256(Pointer<Uint8> data, int size, Pointer<Uint8> out);
 

@@ -51,11 +51,10 @@ void bench_run_ops(rayo_session *s, double *op_ms) {
   exec.scratch = s->memory + s->plan.scratch_offset;
   exec.symbols = s->symbols;
   for (i = 0; i < g->node_count; i++) {
-    rayo_tensor args[RAYO_MAX_INPUTS];
     double a;
-    rayo_graph_node_inputs(g, &s->model->pcwt, i, &s->values, args);
+    rayo_graph_node_inputs(g, &s->model->pcwt, i, &s->values, s->values.args);
     a = bench_now_ms();
-    g->nodes[i].op->run(g->nodes[i].params, args, &s->values.nodes[i], &exec);
+    g->nodes[i].op->run(g->nodes[i].params, s->values.args, &s->values.nodes[i], &exec);
     op_ms[i] += bench_now_ms() - a;
   }
 }

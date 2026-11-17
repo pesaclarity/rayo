@@ -11,8 +11,8 @@ The Pesa Clarity app's Ask reader and writer, as rayo runs them, and what TFLite
 | `ask_writer_tflite.json` | TFLite (XNNPACK, two threads, as the recordings) fed each recorded reply token by token: the next-token argmax and its logit at every step |
 
 `tests/test_ask.c` checks rayo against them: the reader's every label and probabilities within
-1e-4, the writer's next-token choice at every step and its top logit within 0.2. The tools in
-`tools/` time them.
+1e-4, the writer's next-token choice at every step and its top logit within 0.2. The programs in
+`examples/ask/` time them.
 
 The weights are the Pesa Clarity Ask reader and writer, by the Pesa Clarity project, licensed
 under CC BY-SA 4.0 (pesaclarity-ml `MODEL-WEIGHTS.md` and `LICENSE-WEIGHTS`), trained on

@@ -2,8 +2,10 @@
 #ifndef RAYO_H
 #define RAYO_H
 
+#include "rayo/config.h"
 #include "rayo/error.h"
 #include "rayo/model.h"
+#include "rayo/op.h"
 #include "rayo/session.h"
 #include "rayo/sha256.h"
 #include "rayo/tensor.h"

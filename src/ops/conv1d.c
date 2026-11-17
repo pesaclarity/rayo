@@ -16,8 +16,6 @@
 #include "ops/ops.h"
 #include "ops/scratch.h"
 
-#define RAYO_CONV_MAX_DILATION 64
-
 typedef struct conv_params {
   rayo_linear lin;
   size_t size;
@@ -43,11 +41,18 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
   p = rayo_arena_alloc(arena, sizeof *p);
   if (!p) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   r = kernel->shape.rank;
-  s = rayo_attr_int(spec, "size", 0, 1, 64, &size, msg);
-  if (s == RAYO_OK)
-    s = rayo_attr_int(spec, "dilation", 1, 1, RAYO_CONV_MAX_DILATION, &dilation, msg);
+  s = rayo_attr_int(spec, "size", 0, 1, (rayo_i32)RAYO_MAX_DIM, &size, msg);
+  if (s == RAYO_OK) {
+    s = rayo_attr_int(spec, "dilation", 1, 1, (rayo_i32)RAYO_MAX_DIM, &dilation, msg);
+  }
   if (s == RAYO_OK) s = rayo_attr_activation(spec, &p->lin.act, msg);
   if (s != RAYO_OK) return s;
+  /* The reach, (size - 1) * dilation, stays below 2^30, so positions and
+   * offsets fit a 32-bit long. */
+  if (size > 1 && dilation > (RAYO_I32_MAX / 2) / (size - 1)) {
+    return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: size %ld at dilation %ld reaches too far",
+                     spec->output, (long)size, (long)dilation);
+  }
   if (size != kernel->shape.dims[r - 2] || (size - 1) * dilation % 2 != 0) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: size %ld does not fit the kernel or centre",
                      spec->output, (long)size);

@@ -29,10 +29,25 @@ typedef struct rayo_memory_info {
 RAYO_API rayo_status rayo_model_create(const void *data, size_t size, rayo_model **out,
                                        rayo_message *msg);
 
+/* Options for rayo_model_create_with. Zero them (memset) before setting
+ * what you need, so options added later keep their defaults. */
+typedef struct rayo_model_options {
+  /* Ops of the program's own (rayo/op.h) the graph may name, besides the
+   * built-in ones; their names must differ from those. The ops must stay
+   * valid while the model lives. */
+  const struct rayo_custom_op *const *ops;
+  int op_count;
+} rayo_model_options;
+
+/* rayo_model_create with `options` (NULL: the defaults). */
+RAYO_API rayo_status rayo_model_create_with(const void *data, size_t size,
+                                            const rayo_model_options *options, rayo_model **out,
+                                            rayo_message *msg);
+
 /* Frees `model` (NULL is fine). Destroy its sessions first. */
 RAYO_API void rayo_model_destroy(rayo_model *model);
 
-/* The header's "model" name, such as "ask-reader". Owned by the model. */
+/* The header's "model" name, such as "example-classifier". Owned by the model. */
 RAYO_API const char *rayo_model_name(const rayo_model *model);
 
 /* The header's "metadata" object as JSON text ("{}" when absent). Owned by

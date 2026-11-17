@@ -7,9 +7,9 @@
 #include "core/json.h"
 #include "format/pcwt.h"
 #include "ops/op.h"
+#include "rayo/model.h"
 
 #define RAYO_GRAPH_VERSION 1
-#define RAYO_MAX_SYMBOLS 8
 
 typedef enum rayo_ref_kind {
   RAYO_REF_INPUT,
@@ -43,7 +43,7 @@ typedef struct rayo_node {
   const rayo_op *op;
   const char *output;
   rayo_i32 input_count;
-  rayo_ref inputs[RAYO_MAX_INPUTS];
+  rayo_ref *inputs;   /* input_count of them, in the graph's arena */
   const void *params; /* the op's, from its prepare */
 } rayo_node;
 
@@ -54,26 +54,28 @@ typedef struct rayo_graph_output {
 
 typedef struct rayo_graph {
   rayo_i32 symbol_count;
-  const char *symbols[RAYO_MAX_SYMBOLS];
-  rayo_i32 symbol_max[RAYO_MAX_SYMBOLS];
+  const char **symbols;
+  rayo_i32 *symbol_max;
   /* The values a session plans its memory for: each symbol's largest, unless
    * the graph's "plan" says otherwise (when symbols trade off, as a cache's
    * past P and new T with P + T at most its length). */
-  rayo_i32 symbol_plan[RAYO_MAX_SYMBOLS];
+  rayo_i32 *symbol_plan;
   rayo_i32 input_count;
   rayo_graph_input *inputs;
   rayo_i32 state_count;
   rayo_graph_input *states;
   rayo_i32 node_count;
   rayo_node *nodes;
+  rayo_i32 max_node_inputs; /* the most inputs any node reads */
   rayo_i32 output_count;
   rayo_graph_output *outputs;
 } rayo_graph;
 
 /* Reads `json` (the header's "graph") into `out`, preparing every node's op
  * with its weights from `weights`. Everything lives in `arena`. */
-rayo_status rayo_graph_read(const rayo_json *json, const rayo_pcwt *weights, rayo_arena *arena,
-                            rayo_graph *out, rayo_message *msg);
+rayo_status rayo_graph_read(const rayo_json *json, const rayo_pcwt *weights,
+                            const rayo_model_options *options, rayo_arena *arena, rayo_graph *out,
+                            rayo_message *msg);
 
 /* The index of symbol `name`, or -1. */
 rayo_i32 rayo_graph_symbol(const rayo_graph *graph, const char *name);

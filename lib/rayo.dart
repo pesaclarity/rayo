@@ -14,7 +14,8 @@ library;
 
 export 'src/errors.dart' show RayoException;
 export 'src/isolate_runner.dart' show runInIsolate;
-export 'src/library.dart' show rayoAvailable, rayoSha256, rayoVersion;
+export 'src/library.dart'
+    show rayoAvailable, rayoBuiltinOps, rayoSha256, rayoVersion;
 export 'src/model.dart' show RayoModel;
 export 'src/session.dart' show RayoSession, RayoSessionRef;
 export 'src/tensor.dart' show RayoDtype, RayoMemory, RayoTensorInfo;

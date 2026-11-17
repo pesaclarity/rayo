@@ -33,7 +33,7 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
   p = rayo_arena_alloc(arena, sizeof *p);
   if (!p) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   *params = p;
-  s = rayo_attr_int(spec, "heads", 1, 1, 256, &p->heads, msg);
+  s = rayo_attr_int(spec, "heads", 1, 1, (rayo_i32)RAYO_MAX_DIM, &p->heads, msg);
   if (s == RAYO_OK) s = rayo_attr_int(spec, "causal", 0, 0, 1, &p->causal, msg);
   if (s == RAYO_OK) s = rayo_attr_float(spec, "scale", 0.0f, &p->scale, msg);
   return s;

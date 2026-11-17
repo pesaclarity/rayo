@@ -58,48 +58,14 @@ Shapes are row-major, outermost first: a sequence of `T` vectors of size `C` is 
 
 ## Ops
 
-| Op | Inputs | Attributes | Output |
-| --- | --- | --- | --- |
-| `gather` | table `[rows, width]` (float32, or int8 with one scale), ids int32 `[n]` | | float32 `[n, width]`; an id outside the table fails the run |
-| `concat` | a `[..., p]`, b `[..., q]` | | `[..., p + q]` |
-| `mask` | ids int32 | | 1 where the id is above 0, else 0 |
-| `add` | a, b of one shape | | a + b |
-| `softmax` | x | | over the innermost dimension |
-| `dense` | x `[..., in]`, kernel `[out, in]`, bias `[out]` (optional) | `activation` (`none`, `relu`), `input_quantization` | `[..., out]` |
-| `conv1d` | x `[T, C]`, kernel `[out, 1, size, C]` (TFLite's) or `[out, size, C]`, bias | `size`, `dilation` (default 1), `activation`, `input_quantization` | `[T, out]`, same padding: tap j of position t reads `t + (j - (size-1)/2) * dilation`, zeros outside |
-| `masked_max` | x `[T, C]`, mask `[T]` | `fill` (default 10000) | `[C]`: max over t of `x * m - (1 - m) * fill` |
-| `masked_mean` | x `[T, C]`, mask `[T]` | | `[C]`: sum over t of `x * m`, divided by max(sum of m, 1) |
-| `layer_norm` | x `[..., C]`, gamma `[C]`, beta `[C]` (float32) | `epsilon` (default 1e-5) | normalised over the innermost dimension, as TFLite computes Keras' LayerNormalization: `m = rsqrt(var + eps) * gamma`, `x * m + (beta - mean * m)` |
-| `range` | (none) | `start`, `size` (sizes) | int32 `[size]`: start, start + 1, ... |
-| `cache_write` | a state `[N, C]`, x `[T, C]` | `at` (a size) | writes x into the state's rows `at .. at+T-1` and gives rows `0 .. at+T-1` (a view of the state, no copy) |
-| `attention` | q `[T, D]`, k `[S, D]`, v `[S, D]` | `heads`, `causal` (0 or 1), `scale` (default `1/sqrt(D/heads)`) | `[T, D]`: per head, softmax(q · kᵀ · scale) · v; the T queries are at positions `S-T .. S-1`, and with `causal` each sees only keys at or before its own |
-| `last_row` | x `[T, C]` | | `[C]`: the last row |
-
-`activation` is `none` (default), `relu` or `gelu_erf` (`0.5 x (1 + erf(x / sqrt 2))`,
-Keras' gelu).
-
-### int8 kernels
-
-A `dense` or `conv1d` with an int8 kernel (symmetric, one scale per output or one in all) runs
-as TFLite's dynamic-range ("hybrid") kernels do, so a model exported from TFLite gives
-TFLite's numbers:
-
-1. the float input is quantised to int8 on the fly, asymmetrically, its range widened to
-   include 0, halves rounded away from zero (TFLite's `AsymmetricQuantizeFloats`):
-   - `input_quantization: "rows"` (dense, the default): one scale and zero point per row;
-   - `input_quantization: "tensor_phases"` (conv1d, the default): one for the whole input,
-     except that a dilated convolution (TFLite's `SPACE_TO_BATCH_ND`) quantises each of its
-     `dilation` phases (positions t with `t % dilation == p`) on its own;
-2. the product is exact in int32;
-3. `y = bias + (acc - zero_point * rowsum(kernel)) * input_scale * kernel_scale`, then the
-   activation.
-
-Positions outside the sequence count as float zeros (the zero point in int8).
+Each node's `op` is one of rayo's built-in ops, documented with its attributes, shapes and
+int8 behaviour in [docs/OPS.md](OPS.md), or one the program gave rayo when it loaded the model
+(`include/rayo/op.h`). A graph that names any other op fails to load, naming it.
 
 ## A decoder
 
-The Ask writer's graph (pesaclarity-ml `akili.ask.writer_weights.rayo_graph`) decodes word by
-word with a key/value cache per layer:
+A transformer decoder (the Ask writer's graph, for example) decodes token by token with a
+key/value cache per layer:
 
 ```json
 "symbols": {"T": 64, "P": 63}, "plan": {"P": 0},

@@ -30,6 +30,8 @@ jobs:
         run: tool/ci/models.sh
       - name: Format, and C89 with gcc and clang
         run: tool/ci/lint.sh
+      - name: Examples
+        run: tool/ci/examples.sh gcc
 
   linux-x86_64:
     name: linux-x86_64 (${{ matrix.cc }})
