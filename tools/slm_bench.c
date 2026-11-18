@@ -3,7 +3,7 @@
  * mapped from its file, sized as a generator sizes it.
  *
  *   slm_bench MODEL.weights [P] [D] [threads] [--kv int8|float32]
- *             [--context N] [--chunk N]
+ *             [--context N] [--chunk N] [--access normal|sequential|willneed|random]
  *
  * --context (default 1024) and --chunk (default 32) are at most the
  * model's. Prints prompt and decode tokens a second, the peak private
@@ -71,6 +71,7 @@ int main(int argc, char **argv) {
   rayo_model *m = NULL;
   rayo_session *s = NULL;
   rayo_session_options o;
+  rayo_model_options mo;
   rayo_symbol_limit limits[2];
   rayo_tensor_view out, in;
   rayo_message msg;
@@ -81,6 +82,7 @@ int main(int argc, char **argv) {
   const char *path = NULL;
   double t0, t_load, t_prompt, t_decode, rss_load;
   memset(&o, 0, sizeof o);
+  memset(&mo, 0, sizeof mo);
   for (a = 1; a < argc; a++) {
     if (strcmp(argv[a], "--kv") == 0 && a + 1 < argc) {
       o.cache = strcmp(argv[++a], "int8") == 0 ? RAYO_CACHE_INT8 : RAYO_CACHE_FLOAT32;
@@ -88,6 +90,13 @@ int main(int argc, char **argv) {
       context = atoi(argv[++a]);
     } else if (strcmp(argv[a], "--chunk") == 0 && a + 1 < argc) {
       chunk = atoi(argv[++a]);
+    } else if (strcmp(argv[a], "--access") == 0 && a + 1 < argc) {
+      const char *v = argv[++a];
+      mo.access = strcmp(v, "normal") == 0       ? RAYO_ACCESS_NORMAL
+                  : strcmp(v, "sequential") == 0 ? RAYO_ACCESS_SEQUENTIAL
+                  : strcmp(v, "willneed") == 0   ? RAYO_ACCESS_WILLNEED
+                  : strcmp(v, "random") == 0     ? RAYO_ACCESS_RANDOM
+                                                 : RAYO_ACCESS_DEFAULT;
     } else if (!path) {
       path = argv[a];
     } else if (positional < 3) {
@@ -97,14 +106,14 @@ int main(int argc, char **argv) {
   if (!path) {
     fprintf(stderr,
             "usage: slm_bench MODEL.weights [prompt] [decode] [threads] [--kv int8|float32] "
-            "[--context N] [--chunk N]\n");
+            "[--context N] [--chunk N] [--access normal|sequential|willneed|random]\n");
     return 2;
   }
   prompt = num[1];
   decode = num[2];
   o.threads = num[3];
   t0 = bench_now_ms();
-  if (rayo_model_load(path, NULL, &m, &msg) != RAYO_OK) {
+  if (rayo_model_load(path, &mo, &m, &msg) != RAYO_OK) {
     fprintf(stderr, "slm_bench: %s\n", msg.text);
     return 1;
   }

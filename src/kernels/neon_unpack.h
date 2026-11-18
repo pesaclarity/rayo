@@ -40,4 +40,24 @@ static RAYO_NEON_INLINE void neon_unpack_q3(const rayo_u8 *g, int8x16_t *wl, int
   *wh = vsubq_s8(vreinterpretq_s8_u8(hi), four);
 }
 
+/* float16 scales to float32 four at a time, exactly as
+ * rayo_half_to_float (kernels/half.h, included first). */
+static RAYO_NEON_INLINE void neon_half_row(const rayo_u16 *h, size_t n, float *out) {
+  const uint32x4_t low15 = vdupq_n_u32(0x7fff), top = vdupq_n_u32(0x8000);
+  const uint32x4_t bias = vdupq_n_u32(0x38000000), inf = vdupq_n_u32(0x7f800000);
+  size_t i = 0;
+  for (; i + 4 <= n; i += 4) {
+    const uint32x4_t x = vmovl_u16(vld1_u16(h + i));
+    const uint32x4_t em = vandq_u32(x, low15);
+    const uint32x4_t sign = vshlq_n_u32(vandq_u32(x, top), 16);
+    const uint32x4_t norm = vaddq_u32(vshlq_n_u32(em, 13), bias);
+    const uint32x4_t bits = vbslq_u32(vcgtq_u32(em, vdupq_n_u32(0x7bff)), inf, norm);
+    const float32x4_t sub = vmulq_n_f32(vcvtq_f32_u32(em), 5.9604644775390625e-8f);
+    const float32x4_t f =
+        vbslq_f32(vcltq_u32(em, vdupq_n_u32(0x0400)), sub, vreinterpretq_f32_u32(bits));
+    vst1q_f32(out + i, vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(f), sign)));
+  }
+  for (; i < n; i++) out[i] = rayo_half_to_float(h[i]);
+}
+
 #endif

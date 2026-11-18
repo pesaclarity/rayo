@@ -88,12 +88,18 @@ static void gemm_q(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT as
                    const rayo_u8 *RAYO_RESTRICT w, const void *wscale, rayo_bool half, size_t n,
                    size_t k, float *RAYO_RESTRICT c, size_t ldc, size_t bytes) {
   const size_t groups = k / RAYO_Q4_GROUP;
+  float row[RAYO_SCALE_ROW];
   size_t i, j;
   for (j = 0; j < n; j++) {
     const rayo_u8 *wj = w + j * groups * bytes;
+    /* A row's float16 scales converted once, for all its groups and rows. */
+    const rayo_bool conv = half && groups <= RAYO_SCALE_ROW;
+    const void *ws = conv ? (const void *)row : wscale;
+    const rayo_bool h = conv ? RAYO_FALSE : half;
+    const size_t first = conv ? 0 : j * groups;
+    if (conv) rayo_half_row((const rayo_u16 *)wscale + j * groups, groups, row);
     for (i = 0; i < m; i++) {
-      c[i * ldc + j] =
-          dot_q(a + i * k, ascale + i * groups, wj, wscale, half, j * groups, groups, bytes);
+      c[i * ldc + j] = dot_q(a + i * k, ascale + i * groups, wj, ws, h, first, groups, bytes);
     }
   }
 }

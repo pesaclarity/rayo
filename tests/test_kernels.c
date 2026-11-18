@@ -102,13 +102,14 @@ static double half_value(rayo_u16 h) {
 /* A product of group-wise weights (`bits` 4 or 3, scales float32 or, with
  * `half`, float16) against double maths on the dequantised values, and the
  * kernel against the generic one, bit for bit. */
-static void check_q(rayo_gemm_q4_fn *fn, int bits, rayo_bool half, const char *name) {
-  enum { M = 3, N = 7, K = 96, G = K / RAYO_Q4_GROUP };
+static void check_q(rayo_gemm_q4_fn *fn, int bits, rayo_bool half, size_t K, const char *name) {
+  enum { M = 3, N = 7, KMAX = 608, GMAX = KMAX / RAYO_Q4_GROUP };
   const size_t gb = bits == 4 ? RAYO_Q4_GROUP_BYTES : RAYO_Q3_GROUP_BYTES;
-  float x[M * K], ascale[M * G], wscale[N * G], want[M * N], got[M * N];
-  rayo_u16 wscale16[N * G];
-  rayo_i8 q[M * K];
-  rayo_u8 w[N * G * RAYO_Q4_GROUP_BYTES];
+  const size_t G = K / RAYO_Q4_GROUP;
+  static float x[M * KMAX], ascale[M * GMAX], wscale[N * GMAX], want[M * N], got[M * N];
+  static rayo_u16 wscale16[N * GMAX];
+  static rayo_i8 q[M * KMAX];
+  static rayo_u8 w[N * GMAX * RAYO_Q4_GROUP_BYTES];
   const void *ws = half ? (const void *)wscale16 : (const void *)wscale;
   rayo_gemm_q4_fn *generic = bits == 4 ? rayo_gemm_q4_generic : rayo_gemm_q3_generic;
   int same = 1, close = 1;
@@ -121,7 +122,9 @@ static void check_q(rayo_gemm_q4_fn *fn, int bits, rayo_bool half, const char *n
     /* Normal float16 values of 2^-10 to 2^-1, either sign, and a subnormal. */
     wscale16[i] = (rayo_u16)((next() % 2u) << 15 | (5u + next() % 9u) << 10 | next() % 1024u);
   }
-  wscale16[3] = 0x0123;
+  wscale16[3] = 0x0123; /* subnormal ones, in a block of eight and in the tail */
+  wscale16[N * G - 1] = 0x8007;
+  wscale16[10 % (N * G)] = 0x0000;
   rayo_quantize_groups(x, M, K, q, ascale);
   generic(q, ascale, M, w, ws, half, N, K, want, N);
   fn(q, ascale, M, w, ws, half, N, K, got, N);
@@ -147,17 +150,20 @@ static void check_q(rayo_gemm_q4_fn *fn, int bits, rayo_bool half, const char *n
   for (i = 0; i < M * K; i++)
     close &= fabs(q[i] * ascale[i / 32] - x[i]) <= ascale[i / 32] * 0.5001;
   EXPECT(ascale[0] > 0.0f);
-  printf("  q%d kernel %s, %s scales: %s\n", bits, name, half ? "float16" : "float32",
-         same ? "same as generic" : "DIFFERS from generic");
+  printf("  q%d kernel %s, %s scales, k %lu: %s\n", bits, name, half ? "float16" : "float32",
+         (unsigned long)K, same ? "same as generic" : "DIFFERS from generic");
   EXPECT(close);
   EXPECT(same);
 }
 
 static void check_q4(rayo_gemm_q4_fn *q4, rayo_gemm_q4_fn *q3, const char *name) {
-  check_q(q4, 4, RAYO_FALSE, name);
-  check_q(q4, 4, RAYO_TRUE, name);
-  check_q(q3, 3, RAYO_FALSE, name);
-  check_q(q3, 3, RAYO_TRUE, name);
+  size_t k;
+  for (k = 96; k <= 608; k += 512) {
+    check_q(q4, 4, RAYO_FALSE, k, name);
+    check_q(q4, 4, RAYO_TRUE, k, name);
+    check_q(q3, 3, RAYO_FALSE, k, name);
+    check_q(q3, 3, RAYO_TRUE, k, name);
+  }
 }
 
 /* Every float16 but infinities and NaNs converts exactly. */

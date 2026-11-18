@@ -105,6 +105,30 @@ RAYO_AVX2 void rayo_gemm_i8_avx2(const rayo_i8 *RAYO_RESTRICT a, size_t lda, siz
  * (pmaddubsw, at most 2 * 127 * 8 per pair, no saturation), pairs added
  * into int32 lanes of four products (pmaddwd), then scaled in float and
  * added into eight lanes, as the generic kernel does. */
+/* float16 scales to float32 eight at a time (exactly as rayo_half_to_float:
+ * normal values move their exponent, subnormal ones are their mantissa
+ * times 2^-24), the rest one by one. */
+RAYO_AVX2 static RAYO_INLINE void half_row_avx2(const rayo_u16 *h, size_t n, float *out) {
+  const __m256i low15 = _mm256_set1_epi32(0x7fff), top = _mm256_set1_epi32(0x8000);
+  const __m256i bias = _mm256_set1_epi32(0x38000000), inf = _mm256_set1_epi32(0x7f800000);
+  const __m256i big = _mm256_set1_epi32(0x7bff), small = _mm256_set1_epi32(0x0400);
+  const __m256 tiny = _mm256_set1_ps(5.9604644775390625e-8f); /* 2^-24 */
+  size_t i = 0;
+  for (; i + 8 <= n; i += 8) {
+    const __m256i x =
+        _mm256_cvtepu16_epi32(_mm_loadu_si128((const __m128i *)(const void *)(h + i)));
+    const __m256i em = _mm256_and_si256(x, low15);
+    const __m256i sign = _mm256_slli_epi32(_mm256_and_si256(x, top), 16);
+    const __m256i norm = _mm256_add_epi32(_mm256_slli_epi32(em, 13), bias);
+    const __m256i bits = _mm256_blendv_epi8(norm, inf, _mm256_cmpgt_epi32(em, big));
+    const __m256 sub = _mm256_mul_ps(_mm256_cvtepi32_ps(em), tiny);
+    const __m256 f = _mm256_blendv_ps(_mm256_castsi256_ps(bits), sub,
+                                      _mm256_castsi256_ps(_mm256_cmpgt_epi32(small, em)));
+    _mm256_storeu_ps(out + i, _mm256_or_ps(f, _mm256_castsi256_ps(sign)));
+  }
+  for (; i < n; i++) out[i] = rayo_half_to_float(h[i]);
+}
+
 RAYO_AVX2 static RAYO_INLINE __m256i unpack_q4_avx2(const rayo_u8 *g) {
   const __m128i low = _mm_set1_epi8(15);
   const __m128i b = _mm_loadu_si128((const __m128i *)(const void *)g);
@@ -181,16 +205,22 @@ RAYO_AVX2 static RAYO_INLINE void gemm_q_avx2(const rayo_i8 *RAYO_RESTRICT a,
                                               rayo_bool half, size_t n, size_t k,
                                               float *RAYO_RESTRICT c, size_t ldc, size_t bytes) {
   const size_t groups = k / RAYO_Q4_GROUP;
+  float row[RAYO_SCALE_ROW];
   size_t i, j;
   for (j = 0; j < n; j++) {
     const rayo_u8 *wj = w + j * groups * bytes;
+    /* A row's float16 scales converted once, for all its groups and rows. */
+    const rayo_bool conv = half && groups <= RAYO_SCALE_ROW;
+    const void *ws = conv ? (const void *)row : wscale;
+    const rayo_bool h = conv ? RAYO_FALSE : half;
+    const size_t first = conv ? 0 : j * groups;
+    if (conv) half_row_avx2((const rayo_u16 *)wscale + j * groups, groups, row);
     for (i = 0; i + 2 <= m; i += 2) {
       dot2_q_avx2(a + i * k, a + (i + 1) * k, ascale + i * groups, ascale + (i + 1) * groups, wj,
-                  wscale, half, j * groups, groups, bytes, &c[i * ldc + j], &c[(i + 1) * ldc + j]);
+                  ws, h, first, groups, bytes, &c[i * ldc + j], &c[(i + 1) * ldc + j]);
     }
     if (i < m) {
-      c[i * ldc + j] =
-          dot_q_avx2(a + i * k, ascale + i * groups, wj, wscale, half, j * groups, groups, bytes);
+      c[i * ldc + j] = dot_q_avx2(a + i * k, ascale + i * groups, wj, ws, h, first, groups, bytes);
     }
   }
 }
@@ -260,6 +290,27 @@ RAYO_SSE41 void rayo_gemm_i8_sse41(const rayo_i8 *RAYO_RESTRICT a, size_t lda, s
 }
 
 /* Group-wise weights, as the AVX2 kernel, in two halves of 16. */
+/* float16 scales to float32 four at a time, as half_row_avx2. */
+RAYO_SSE41 static RAYO_INLINE void half_row_sse41(const rayo_u16 *h, size_t n, float *out) {
+  const __m128i low15 = _mm_set1_epi32(0x7fff), top = _mm_set1_epi32(0x8000);
+  const __m128i bias = _mm_set1_epi32(0x38000000), inf = _mm_set1_epi32(0x7f800000);
+  const __m128i big = _mm_set1_epi32(0x7bff), small = _mm_set1_epi32(0x0400);
+  const __m128 tiny = _mm_set1_ps(5.9604644775390625e-8f);
+  size_t i = 0;
+  for (; i + 4 <= n; i += 4) {
+    const __m128i x = _mm_cvtepu16_epi32(_mm_loadl_epi64((const __m128i *)(const void *)(h + i)));
+    const __m128i em = _mm_and_si128(x, low15);
+    const __m128i sign = _mm_slli_epi32(_mm_and_si128(x, top), 16);
+    const __m128i norm = _mm_add_epi32(_mm_slli_epi32(em, 13), bias);
+    const __m128i bits = _mm_blendv_epi8(norm, inf, _mm_cmpgt_epi32(em, big));
+    const __m128 sub = _mm_mul_ps(_mm_cvtepi32_ps(em), tiny);
+    const __m128 f =
+        _mm_blendv_ps(_mm_castsi128_ps(bits), sub, _mm_castsi128_ps(_mm_cmpgt_epi32(small, em)));
+    _mm_storeu_ps(out + i, _mm_or_ps(f, _mm_castsi128_ps(sign)));
+  }
+  for (; i < n; i++) out[i] = rayo_half_to_float(h[i]);
+}
+
 RAYO_SSE41 static RAYO_INLINE void unpack_q4_sse41(const rayo_u8 *g, __m128i *wl, __m128i *wh) {
   const __m128i low = _mm_set1_epi8(15), eight = _mm_set1_epi8(8);
   const __m128i b = _mm_loadu_si128((const __m128i *)(const void *)g);
@@ -319,12 +370,18 @@ RAYO_SSE41 static RAYO_INLINE void gemm_q_sse41(const rayo_i8 *RAYO_RESTRICT a,
                                                 rayo_bool half, size_t n, size_t k,
                                                 float *RAYO_RESTRICT c, size_t ldc, size_t bytes) {
   const size_t groups = k / RAYO_Q4_GROUP;
+  float row[RAYO_SCALE_ROW];
   size_t i, j;
   for (j = 0; j < n; j++) {
     const rayo_u8 *wj = w + j * groups * bytes;
+    /* A row's float16 scales converted once, for all its groups and rows. */
+    const rayo_bool conv = half && groups <= RAYO_SCALE_ROW;
+    const void *ws = conv ? (const void *)row : wscale;
+    const rayo_bool h = conv ? RAYO_FALSE : half;
+    const size_t first = conv ? 0 : j * groups;
+    if (conv) half_row_sse41((const rayo_u16 *)wscale + j * groups, groups, row);
     for (i = 0; i < m; i++) {
-      c[i * ldc + j] =
-          dot_q_sse41(a + i * k, ascale + i * groups, wj, wscale, half, j * groups, groups, bytes);
+      c[i * ldc + j] = dot_q_sse41(a + i * k, ascale + i * groups, wj, ws, h, first, groups, bytes);
     }
   }
 }

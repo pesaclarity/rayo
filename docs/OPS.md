@@ -161,7 +161,7 @@ These take float32 or int32 and copy; none computes.
 
 ## Linear layers
 
-`dense` takes float32, int8 or int4 kernels; `conv1d` float32 or int8.
+`dense` takes float32, int8, int4 or int3 kernels; `conv1d` float32 or int8.
 
 **Float32 kernels:** the product is plain float32.
 
@@ -178,20 +178,21 @@ numbers:
 3. **Dequantise.** `y = bias + (acc - zero_point * rowsum(kernel)) * input_scale *
    kernel_scale`, then the activation.
 
-**int4 kernels** (weight-only, group-wise; the layout is in [FORMAT.md](FORMAT.md)) run as
-language-model runtimes run 4-bit weights:
+**int4 and int3 kernels** (weight-only, group-wise, with float32 or float16 scales; the
+layouts are in [FORMAT.md](FORMAT.md)) run as language-model runtimes run 4-bit weights:
 
 1. **Quantise the input.** Each row of the input is quantised to int8, symmetrically, one
    scale per group of 32: `scale = max |x| / 127`, `q = x * 127 / max |x|`, rounded half away
    from zero.
 2. **Multiply.** Per group, the products of the int8 inputs and the 4-bit weights (-8 to 7)
-   are summed exactly in int32, four at a time; each sum of four is converted to float,
-   multiplied by `input_scale * weight_scale` and added into one of eight lanes.
+   or 3-bit ones (-4 to 3) are summed exactly in int32, four at a time; each sum of four is
+   converted to float, multiplied by `input_scale * weight_scale` and added into one of
+   eight lanes. A float16 scale is converted to float32 exactly first.
 3. **Add up** the lanes as `((l0 + l1) + (l2 + l3)) + ((l4 + l5) + (l6 + l7))`, then the bias
    and the activation.
 
-Every kernel (generic C, SSE4.1, AVX2, NEON, SDOT) gives the same floats, bit for bit; the
-tests check it. The weights are read where they are in the file (mapped), with no copy.
+Every kernel (generic C, SSE4.1, AVX2, NEON, SDOT), for 4 and 3 bits and both scale types,
+gives the same floats, bit for bit; the tests check it. The weights are read where they are in the file (mapped), with no copy.
 
 `activation` is `none` (the default), `relu`, `gelu_erf` (`0.5 x (1 + erf(x / sqrt 2))`,
 Keras' `gelu`) or `silu`. It is fused into the layer.
@@ -279,6 +280,14 @@ then `m = rsqrt(var + eps) * gamma`, then `x * m + (beta - mean * m)`.
 It writes x into rows `at .. at + T - 1` of the state. It is how a decoder keeps each
 layer's keys and values across runs. `at + T` must be at most N.
 
+**int8 cache.** A session created with `cache = RAYO_CACHE_INT8` keeps in int8 each state
+that only `cache_write` nodes write (as their first input) and only `attention` nodes read
+(as k or v). Each row is quantised as it is written, in groups of the attention's head size
+(`width / kv_heads`): `scale = max |x| / 127`, `q = x * 127 / max |x|` rounded half away from
+zero (a group of zeros: scale 0), as the int4 kernels quantise their inputs; a float32 scale
+a group, after the rows. The output is then an int8 view. For SmolLM2-135M's shape the cache
+is 12.2 KB a token instead of 46 KB. A state read by anything else stays float32.
+
 ### `rope`
 
 | | |
@@ -312,6 +321,11 @@ layer's keys and values across runs. `at + T` must be at most N.
   can come from a cache.
 - **`causal`:** a query sees only the keys at or before its own position. A key it may not
   see gets weight 0, which is exactly what TFLite's `-1e9` mask gives in float32.
+- **int8 k and v** (an int8 cache): the score of a key is `scale_g * sum(q[e] * k8[e])` over
+  each group, in float32, and the output adds `(p_j * scale_g) * v8[e]`. On the tiny test
+  model the logits stay within 1% of the largest of the float32 cache's, the most likely
+  token the same at every position tested; on random 128-wide weights (rayo-convert's
+  tests) within 3%.
 
 ## Ops of your own
 
