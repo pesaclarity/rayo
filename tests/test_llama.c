@@ -84,14 +84,19 @@ void test_llama(void) {
   ints(rayo_json_get(want, "greedy"), greedy, 8);
   logits = malloc(vocab * sizeof *logits);
   logits3 = malloc(vocab * sizeof *logits3);
-  for (k = 0; k < 2 && logits && logits3; k++) {
-    const rayo_json *ref = rayo_json_get(want, k ? "logits_q4" : "logits");
+  for (k = 0; k < 4 && logits && logits3; k++) {
+    static const char *const refs[4] = {"logits", "logits_q4", "logits_q4h", "logits_q3"};
+    static const char *const files[4] = {"llama.weights", "llama-q4.weights", "llama-q4h.weights",
+                                         "llama-q3.weights"};
+    static const char *const kinds[4] = {"float32", "q4", "q4 (float16 scales)",
+                                         "q4 and q3 (float16 scales)"};
+    const rayo_json *ref = rayo_json_get(want, refs[k]);
     rayo_model *m = NULL;
     rayo_session *s = NULL, *s3 = NULL;
     rayo_session_options o;
     rayo_message msg;
     double worst = 0, top = 0;
-    model_path(k ? "llama-q4.weights" : "llama.weights", path, sizeof path);
+    model_path(files[k], path, sizeof path);
     EXPECT(rayo_model_load(path, NULL, &m, &msg) == RAYO_OK);
     if (!m) {
       fprintf(stderr, "  %s\n", msg.text);
@@ -109,10 +114,10 @@ void test_llama(void) {
         worst = d > worst ? d : worst;
         top = fabs(ref->items[i]->number) > top ? fabs(ref->items[i]->number) : top;
       }
-      printf("  llama %s (%s): logits within %.2g of NumPy (largest %.2f)\n", k ? "q4" : "float32",
+      printf("  llama %s (%s): logits within %.2g of NumPy (largest %.2f)\n", kinds[k],
              rayo_session_kernels(s), worst, top);
-      /* float32: as NumPy to float32 rounding; q4: against NumPy on the same
-       * 4-bit weights, the activations' int8 rounding. */
+      /* float32: as NumPy to float32 rounding; q4 and q3: against NumPy on
+       * the same 4-bit (and 3-bit) weights, the activations' int8 rounding. */
       EXPECT(worst < (k ? 0.03 * top : 1e-4 * (1 + top)));
       EXPECT(memcmp(logits, logits3, vocab * sizeof *logits) == 0);
       EXPECT(memcmp(got, again, sizeof got) == 0);

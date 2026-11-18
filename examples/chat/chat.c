@@ -75,15 +75,37 @@ static double peak_mb(void) {
 typedef struct stats {
   double prompt_s, reply_s;
   long prompt_tokens, reply_tokens;
+  rayo_process_memory_info peak; /* the most of each, sampled after each step */
+  int have_memory;
 } stats;
+
+/* Samples the process's memory into the peaks. */
+static void sample_memory(stats *st) {
+  rayo_process_memory_info m;
+  if (rayo_process_memory(&m) != RAYO_OK) return;
+  st->have_memory = 1;
+  if (m.private_bytes > st->peak.private_bytes) st->peak.private_bytes = m.private_bytes;
+  if (m.file_bytes > st->peak.file_bytes) st->peak.file_bytes = m.file_bytes;
+  if (m.resident_bytes > st->peak.resident_bytes) st->peak.resident_bytes = m.resident_bytes;
+  if (m.peak_resident_bytes > st->peak.peak_resident_bytes) {
+    st->peak.peak_resident_bytes = m.peak_resident_bytes;
+  }
+}
 
 static void usage(void) {
   fprintf(stderr,
           "usage: chat MODEL.weights [options]\n"
-          "  --tokenizer FILE     its tokenizer.json (default MODEL.tokenizer.json)\n"
+          "  --tokenizer FILE     a tokenizer.json (default: the table in the model file, else\n"
+          "                       MODEL.tokenizer.json)\n"
           "  -p, --prompt TEXT    continue one raw prompt instead of a conversation\n"
           "  --system TEXT        a system text for the conversation\n"
-          "  --threads N          threads (default: the fast cores, at most 4)\n");
+          "  --threads N          threads (default: the fast cores, at most 2 on Android, 4 "
+          "elsewhere)\n");
+  fprintf(stderr,
+          "  --context N          tokens the conversation holds (default 1024, at most the "
+          "model's)\n"
+          "  --chunk N            prompt tokens a run (default 32)\n"
+          "  --kv int8|float32    the key/value cache (default int8: a quarter of the memory)\n");
   fprintf(stderr,
           "  --temp T             temperature (default 0.7; 0: greedy)\n"
           "  --top-k K            (default 40)    --top-p P   (default 0.9)\n"
@@ -108,6 +130,7 @@ static rayo_status reply(rayo_generator *g, const rayo_tokenizer *tok, stats *st
     if (piece) fwrite(piece, 1, size, stdout);
     fflush(stdout);
     n++;
+    sample_memory(st);
   }
   fputc('\n', stdout);
   fflush(stdout);
@@ -133,6 +156,14 @@ static void print_stats(const rayo_generator *g, const rayo_model *m, const stat
   fprintf(stderr, "context: %ld of %ld tokens; model file %.1f MB (mapped)\n",
           (long)rayo_generator_position(g), (long)rayo_generator_context(g),
           (double)mem.weights / (1024.0 * 1024.0));
+  if (st->have_memory) {
+    /* Private: the process's own memory (cache, arena, tables), which the
+     * system must keep; file: the mapped weights' resident pages, which it
+     * can drop and read again. */
+    fprintf(stderr, "memory: private %.1f MB at most, mapped file %.1f MB at most resident\n",
+            (double)st->peak.private_bytes / (1024.0 * 1024.0),
+            (double)st->peak.file_bytes / (1024.0 * 1024.0));
+  }
   if (peak_mb() >= 0) fprintf(stderr, "peak memory (RSS): %.1f MB\n", peak_mb());
 }
 
@@ -152,7 +183,9 @@ int main(int argc, char **argv) {
   rayo_status s;
   stats st;
   double t0;
-  int i, threads = 0;
+  int i, threads = 0, tok_named = 0;
+  rayo_i32 context = 0, chunk = 0;
+  int cache = RAYO_CACHE_INT8;
   memset(&o, 0, sizeof o);
   memset(&st, 0, sizeof st);
   o.sampling.temperature = 0.7f;
@@ -175,12 +208,23 @@ int main(int argc, char **argv) {
     i++;
     if (strcmp(a, "--tokenizer") == 0) {
       tok_path = v;
+      tok_named = 1;
     } else if (strcmp(a, "-p") == 0 || strcmp(a, "--prompt") == 0) {
       prompt = v;
     } else if (strcmp(a, "--system") == 0) {
       system = v;
     } else if (strcmp(a, "--threads") == 0) {
       threads = atoi(v);
+    } else if (strcmp(a, "--context") == 0) {
+      context = atoi(v);
+    } else if (strcmp(a, "--chunk") == 0) {
+      chunk = atoi(v);
+    } else if (strcmp(a, "--kv") == 0) {
+      if (strcmp(v, "int8") != 0 && strcmp(v, "float32") != 0) {
+        usage();
+        return 2;
+      }
+      cache = strcmp(v, "int8") == 0 ? RAYO_CACHE_INT8 : RAYO_CACHE_FLOAT32;
     } else if (strcmp(a, "--temp") == 0) {
       o.sampling.temperature = (float)atof(v);
     } else if (strcmp(a, "--top-k") == 0) {
@@ -205,7 +249,8 @@ int main(int argc, char **argv) {
     return 2;
   }
   if (!tok_path) {
-    /* MODEL.weights -> MODEL.tokenizer.json, as rayo-convert writes it. */
+    /* MODEL.weights -> MODEL.tokenizer.json, as rayo-convert writes it, for
+     * files without a tokeniser table. */
     size_t n = strlen(model_path);
     const char *dot = strrchr(model_path, '.');
     if (dot && strcmp(dot, ".weights") == 0) n = (size_t)(dot - model_path);
@@ -214,13 +259,20 @@ int main(int argc, char **argv) {
     strcpy(tok_buf + n, ".tokenizer.json");
     tok_path = tok_buf;
   }
-  /* Few threads by default: a phone's big cores, at most 4, which is where
-   * the memory bandwidth runs out and the battery starts to pay. */
-  o.threads = threads > 0 ? threads : rayo_cpu_fast_cores();
-  if (threads <= 0 && o.threads > 4) o.threads = 4;
+  /* Few threads by default: a phone's big cores, at most 2 on Android and 4
+   * elsewhere, which is where the memory bandwidth runs out and the battery
+   * starts to pay. */
+  o.threads = threads > 0 ? threads : rayo_cpu_default_threads();
+  o.context = context;
+  o.chunk = chunk;
+  o.cache = cache;
   t0 = now_s();
   s = rayo_model_load(model_path, NULL, &m, &msg);
-  if (s == RAYO_OK) s = rayo_tokenizer_load(tok_path, &tok, &msg);
+  /* The tokeniser: its table in the model file, read in place, unless a
+   * tokenizer.json is named (or the file has none). */
+  if (s == RAYO_OK && (tok_named || rayo_tokenizer_from_model(m, &tok, NULL) != RAYO_OK)) {
+    s = rayo_tokenizer_load(tok_path, &tok, &msg);
+  }
   if (s == RAYO_OK) s = rayo_generator_create(m, tok, &o, &g, &msg);
   if (s != RAYO_OK) {
     fprintf(stderr, "chat: %s\n", msg.text);
@@ -235,6 +287,7 @@ int main(int argc, char **argv) {
     s = rayo_generator_prompt(g, prompt, strlen(prompt), &msg);
     st.prompt_s += now_s() - t0;
     st.prompt_tokens += rayo_generator_position(g);
+    sample_memory(&st);
     fputs(prompt, stdout);
     if (s == RAYO_OK) s = reply(g, tok, &st, &msg);
   } else {
@@ -257,6 +310,7 @@ int main(int argc, char **argv) {
       s = rayo_generator_chat(g, rayo_generator_position(g) == 0 ? system : NULL, line, &msg);
       st.prompt_s += now_s() - t0;
       st.prompt_tokens += rayo_generator_position(g) - before;
+      sample_memory(&st);
       if (s == RAYO_ERR_SHAPE) {
         fprintf(stderr, "-- %s; /reset to start again\n", msg.text);
         s = RAYO_OK;

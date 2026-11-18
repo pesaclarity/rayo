@@ -56,9 +56,20 @@ def main(argv: list[str] | None = None) -> int:
                     "directory (config.json, *.safetensors, tokenizer.json)")
     ap.add_argument("--weights", choices=["q4", "int8", "float32"], default="q4",
                     help="a language model's weights: 4-bit groups (default), int8 or float32")
+    ap.add_argument("--scales", choices=["float16", "float32"], default="float16",
+                    help="q4 (and q3) group scales: float16 (default, 4.5 bits a weight) or "
+                         "float32 (5 bits, as files before)")
+    ap.add_argument("--q3", metavar="ROLES",
+                    help="with --weights q4, 3-bit groups for these matrices, by their role in "
+                         "the graph: attn_q, attn_k, attn_v, attn_o, mlp_gate, mlp_up, mlp_down, "
+                         "embed, or the groups attn, mlp, mlp_in (gate and up), comma-separated")
+    ap.add_argument("--no-tokenizer-table", action="store_true",
+                    help="do not write the tokeniser's table into the model file (it is read "
+                         "in place from the mapped file, with no tokenizer.json at run time)")
     ap.add_argument("--context", type=int,
                     help="a language model's longest context, in tokens (default 2048, at most "
-                         "its own); its key/value cache is planned for this")
+                         "its own); a session plans its key/value cache for its own context "
+                         "(the chat program's default: 1024)")
     ap.add_argument("--chunk", type=int, default=64,
                     help="a language model's prompt tokens per run (default 64): more is a "
                          "little faster on long prompts and plans more memory")
@@ -131,10 +142,12 @@ def _language_model(a: argparse.Namespace) -> int:
     from . import hf
 
     out = Path(a.output) if a.output else Path(a.model.rstrip("/") + ".weights")
-    opts = hf.HfOptions(name=a.name, weights=a.weights, context=a.context,
-                        positions="all" if a.positions == "all" else "last", chunk=a.chunk,
-                        metadata=json.loads(a.metadata) if a.metadata else None)
     try:
+        opts = hf.HfOptions(name=a.name, weights=a.weights, context=a.context,
+                            positions="all" if a.positions == "all" else "last", chunk=a.chunk,
+                            metadata=json.loads(a.metadata) if a.metadata else None,
+                            scales=a.scales, q3=hf.q3_roles(a.q3),
+                            tokenizer_table=not a.no_tokenizer_table)
         size, notes = hf.convert_dir(a.model, out, opts)
     except ConvertError as e:
         print(f"rayo-convert: {a.model}: cannot convert: {e}", file=sys.stderr)
