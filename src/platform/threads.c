@@ -155,9 +155,10 @@ static double now_us(void) {
 /* How long a worker spins after a job before it sleeps, and how long the
  * caller spins for the last parts before it sleeps, in microseconds: long
  * enough to cover the gaps between a decoder's ops, short enough that the
- * gaps between tokens (and an idle app) cost nothing. */
-#define WORKER_SPIN_US 300.0
-#define CALLER_SPIN_US 2000.0
+ * gaps between tokens (and an idle app) cost nothing: a worker sleeps
+ * after 100 us without a job. */
+#define WORKER_SPIN_US 100.0
+#define CALLER_SPIN_US 500.0
 
 /* Spins until *p differs from `old` (or quit, for workers), for at most
  * `us` microseconds; whether it changed. */
