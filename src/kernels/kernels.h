@@ -1,7 +1,7 @@
 /* The numeric kernels. Each has a portable C version (generic.c) and, where
  * the compiler targets it, SIMD ones (x86.c: SSE4.1 or AVX2; neon.c: NEON on
- * arm64 and armv7; x86_vnni.c and neon_dotprod.c: dot-product instructions
- * chosen at run time). The tests run every SIMD kernel against the generic
+ * arm64 and armv7; x86_vnni.c, neon_dotprod.c and neon_i8mm.c: dot-product
+ * and matrix instructions chosen at run time). The tests run every SIMD kernel against the generic
  * one. Only the SIMD files use compiler extensions (intrinsics, target
  * attributes, CPU checks); everything here is C89. */
 #ifndef RAYO_KERNELS_H
@@ -113,8 +113,13 @@ rayo_gemm_q4_fn rayo_gemm_q3_neon;
 rayo_gemm_i8_fn rayo_gemm_i8_neon_dotprod;
 rayo_gemm_q4_fn rayo_gemm_q4_neon_dotprod;
 rayo_gemm_q4_fn rayo_gemm_q3_neon_dotprod;
-/* Whether this CPU has the dot product (Linux and Android only, else no). */
+/* Whether this CPU has the dot product (Linux, Android and macOS, else no). */
 rayo_bool rayo_cpu_has_dotprod(void);
+#define RAYO_KERNELS_NEON_I8MM 1
+/* neon_i8mm.c: SMMLA (ARMv8.6 int8 matrix multiply), chosen at run time. */
+rayo_gemm_i8_fn rayo_gemm_i8_neon_i8mm;
+/* Whether this CPU has the int8 matrix multiply and the dot product. */
+rayo_bool rayo_cpu_has_i8mm(void);
 #endif
 #endif
 
