@@ -17,8 +17,8 @@ offline, in the Play and the F-Droid builds alike; nothing in the library is spe
   intrinsics live only in `src/kernels/x86*.c` and `src/kernels/neon*.c`, and the system's
   headers (mmap, threads, the CPU's cores) only in `src/platform/`, with plain C89 fallbacks.
 - **Every common CPU, the best kernels picked at run time.** Generic C everywhere; SSE4.1,
-  AVX2 and AVX-VNNI on x86; NEON and the ARMv8.2 dot product (SDOT) on ARM, chosen from what
-  the CPU has when the program runs ([Kernels](#kernels)). Android (arm64-v8a, armeabi-v7a,
+  AVX2 and AVX-VNNI on x86; NEON, the ARMv8.2 dot product (SDOT) and the ARMv8.6 int8 matrix
+  multiply (SMMLA, i8mm) on ARM, chosen from what the CPU has when the program runs ([Kernels](#kernels)). Android (arm64-v8a, armeabi-v7a,
   x86_64), Linux (x86_64, arm64, armv7) and macOS (Apple silicon, Intel) are tested in CI.
 - **int8, int4 and int3 weights.** int8 layers run exactly as TFLite's dynamic-range kernels
   (the Ask reader and writer give TFLite's outputs); language models' matrices in 4-bit
@@ -56,9 +56,10 @@ offline, in the Play and the F-Droid builds alike; nothing in the library is spe
   fuzzed, sanitised and statically analysed in CI, built hardened; and a model's SHA-256 and
   Ed25519 signature can be required before rayo reads it, for models downloaded over the air
   ([docs/SECURITY.md](docs/SECURITY.md)).
-- **Small.** The Android library is about 178 KB (arm64-v8a), 146 KB (armeabi-v7a) and 197 KB
-  (x86_64), stripped and hardened, the language-model path and signature checks included (90,
-  69 and 98 KB before the language-model path); CI fails a build over 200 KB.
+- **Small.** The Android library is about 191 KB (arm64-v8a), 152 KB (armeabi-v7a) and 197 KB
+  (x86_64), stripped and hardened, the language-model path, signature checks and phones' fast
+  kernels included (90, 69 and 98 KB before the language-model path); CI fails a build over
+  200 KB.
 
 ## Benchmarks
 
@@ -214,7 +215,7 @@ src/format/       the PCWT reader and its checks
 src/graph/        the graph, shapes and the memory plan
 src/ops/          one file per op family, and the registry
 src/kernels/      generic.c, x86.c (SSE4.1/AVX2), x86_vnni.c, neon.c, neon_dotprod.c,
-                  quantize.c, select.c (which kernels this CPU runs)
+                  neon_i8mm.c, quantize.c, select.c (which kernels this CPU runs)
 src/platform/     mapped files and their hints, page memory, threads, the CPU's fast cores,
                   the process's memory (POSIX, Win32, or C89)
 src/text/         the tokeniser (its table, read in place or built from tokenizer.json), its
@@ -237,9 +238,9 @@ generic one in the tests (the 4-bit ones bit for bit):
 
 | Build | Baseline | Chosen at run time when the CPU has it |
 | --- | --- | --- |
-| Android arm64-v8a | NEON (ARMv8.0) | SDOT dot product (ARMv8.2) |
+| Android arm64-v8a, Linux arm64, macOS arm64 | NEON (ARMv8.0) | SDOT dot product (ARMv8.2); i8mm int8 matrix multiply (SMMLA, ARMv8.6) for int8 |
 | Android armeabi-v7a | NEON | |
-| Android x86_64 | SSE4.1 | AVX2, AVX-VNNI |
+| Android x86_64 | SSE4.1 | AVX2 (without its decoder product, for size), AVX-VNNI |
 | Linux x86_64 | AVX2 | AVX-VNNI |
 | macOS x86_64, any x86 built with gcc or clang | what the flags give | SSE4.1, AVX2, AVX-VNNI |
 
@@ -277,7 +278,7 @@ copy (251 KB), the session's arena (241 KB) and 82 KB of tables. Measured with
 ## Same floats from every build
 
 A model gives the same output floats, bit for bit, with every kernel set (generic C, SSE4.1,
-AVX2, AVX-VNNI, NEON, SDOT), with any number of threads, and with whatever compiler and flags
+AVX2, AVX-VNNI, NEON, SDOT, i8mm), with any number of threads, and with whatever compiler and flags
 built rayo. A compiler may otherwise fuse `a * b + c` into one fused multiply-add, rounded
 once instead of twice: clang does by default (`-ffp-contract=on`), and with `-mfma` or on
 ARM64 it emits FMA instructions, so a `clang -O3 -mavx2 -mfma` build and a `gcc -O2` one
