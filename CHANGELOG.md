@@ -4,6 +4,12 @@ Written from the conventional commit titles on `main` at each release.
 
 ## Unreleased
 
+- The same floats from every build: rayo is compiled with `-ffp-contract=off` everywhere (the
+  Makefile, the CI scripts, the Dart build hook, rayo-convert's `Library.build`), so clang no
+  longer fuses multiplies and adds into FMAs on its own. A `clang -O3 -mavx2 -mfma` build now
+  gives the same bits as a `gcc -O2` one (`tool/ci/builds.sh`). Builds of `src/` of your own
+  should pass the flag too.
+
 - Small language models in less memory, for phones of 2 GB: an int8 key/value cache
   (`RAYO_CACHE_INT8`, a scale per token and head); a session's own context and symbol limits
   (`rayo_session_options.state_rows`, `limits`), the generator's `context` (1024 by
