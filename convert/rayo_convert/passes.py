@@ -123,8 +123,10 @@ def uniform(v: np.ndarray | None) -> float | None:
 
 def simplify(g: Graph, sh: dict[int, tuple[int, ...]], notes: Notes) -> None:
     """Drops ops that do nothing on rayo's shapes: reshapes between shapes alike but for
-    leading ones, casts from comparisons (rayo's are already float 0/1), and the
-    negative-index wrap TFLite puts before an embedding."""
+    leading ones, casts from comparisons (rayo's are already float 0/1), a transpose undone
+    by a later one with only elementwise ops between (PyTorch's channels-first Conv1d between
+    layers that work on [T, C]), and the negative-index wrap TFLite puts before an
+    embedding."""
     changed = True
     while changed:
         changed = False
@@ -139,6 +141,8 @@ def simplify(g: Graph, sh: dict[int, tuple[int, ...]], notes: Notes) -> None:
                 g.ops.remove(o)
                 alias(g, o.outputs[0], o.inputs[0])
                 changed = True
+            elif o.kind == "TRANSPOSE" and _transposes_cancel(g, sh, o):
+                changed = True
             elif o.kind in ("SELECT", "SELECT_V2") and _negative_wrap(g, o):
                 g.ops.remove(o)
                 alias(g, o.outputs[0], o.inputs[2])
@@ -146,6 +150,68 @@ def simplify(g: Graph, sh: dict[int, tuple[int, ...]], notes: Notes) -> None:
                           "refuses an id outside the table (RAYO_ERR_SHAPE) instead")
                 changed = True
     _dead(g)
+
+
+# Elementwise ops a transpose moves past: of one input, or of two of one shape.
+ELEMENTWISE = {"RELU", "RELU6", "GELU", "TANH", "LOGISTIC", "NEG", "ABS", "EXP", "LOG", "SQRT",
+               "RSQRT", "SQUARE", "ONNX_ERF", "IDENTITY"}
+ELEMENTWISE_2 = {"ADD", "SUB", "MUL", "DIV", "MAXIMUM", "MINIMUM"}
+
+
+def _perm(g: Graph, o: Op) -> list[int] | None:
+    p = const_value(g, o.inputs[1]) if o.kind == "TRANSPOSE" and len(o.inputs) > 1 else None
+    return None if p is None else [int(v) for v in p.reshape(-1)]
+
+
+def _transposes_cancel(g: Graph, sh: dict[int, tuple[int, ...]], o: Op) -> bool:
+    """A transpose of a transpose that undoes it goes (the first stays for its other readers).
+    Before that, in an ONNX graph, a transpose moves past the elementwise ops after it (of
+    both inputs of a binary one, when they are transposed alike), so PyTorch's channels-first
+    Conv1d between layers that work on [T, C] (a ReLU, a residual add between) leaves no
+    transpose, and the ReLU fuses into the convolution."""
+    if o not in g.ops:
+        return False
+    prod = g.producer()
+    q = _perm(g, o)
+    inner = prod.get(o.inputs[0])
+    p = _perm(g, inner) if inner is not None else None
+    if q is not None and p is not None and len(p) == len(q) and \
+            [p[i] for i in q] == list(range(len(p))):
+        g.ops.remove(o)
+        alias(g, o.outputs[0], inner.inputs[0])
+        _drop_unread(g, inner)
+        return True
+    if g.source != "onnx" or q is None:
+        return False
+    for e in [u for u in g.ops if o.outputs[0] in u.inputs]:
+        if e.kind in ELEMENTWISE and len([i for i in e.inputs if i >= 0]) == 1:
+            srcs = [o]
+        elif e.kind in ELEMENTWISE_2 and len(e.inputs) == 2:
+            srcs = [prod.get(i) for i in e.inputs]
+            if any(s is None or _perm(g, s) != q for s in srcs) or \
+                    sh[srcs[0].inputs[0]] != sh[srcs[1].inputs[0]]:
+                continue
+        else:
+            continue
+        x = srcs[0].inputs[0]
+        y = e.outputs[0]
+        z = g.add_tensor(g.tensors[y].name + "/untransposed", g.tensors[y].dtype, sh[x])
+        sh[z] = tuple(sh[x])
+        e.inputs = [s.inputs[0] for s in srcs] if len(srcs) == 2 else \
+            [x if i == o.outputs[0] else i for i in e.inputs]
+        e.outputs = [z]
+        g.ops.insert(g.ops.index(e) + 1, Op(e.index, "TRANSPOSE", [z, o.inputs[1]], [y]))
+        for src in srcs:
+            _drop_unread(g, src)
+        return True
+    return False
+
+
+def _drop_unread(g: Graph, o: Op) -> None:
+    """Removes ``o`` when nothing reads its outputs (so it does not hold a tensor's readers)."""
+    if o in g.ops and not any(t in g.outputs or any(t in u.inputs for u in g.ops)
+                              for t in o.outputs):
+        g.ops.remove(o)
 
 
 SHAPE_ONLY = {"RESHAPE", "EXPAND_DIMS", "SQUEEZE", "ONNX_RESHAPE", "ONNX_FLATTEN", "ONNX_SQUEEZE",
@@ -295,7 +361,7 @@ def fuse_conv1d(g: Graph, sh: dict[int, tuple[int, ...]], notes: Notes) -> None:
                          "fused": opt.get("fused_activation_function", 0)}
             o.inputs = [x]
             continue
-        if same and dil > 1 and k.dtype == "int8":
+        if same and dil > 1 and k.dtype == "int8" and not opt.get("input_phases"):
             continue  # TFLite quantises the whole input; rayo's dilated conv1d each phase
         if same and dil > 1 and (size - 1) * dil % 2 == 0:
             o.kind = "rayo:conv1d"

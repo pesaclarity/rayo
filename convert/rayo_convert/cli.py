@@ -6,6 +6,7 @@ rayo model.
     rayo-convert reader.tflite -o reader.weights --name ask-reader \\
         --split-input question=tokens:96,shapes:96 --outputs slots,intent
     rayo-convert writer.tflite -o writer.weights --rename output_0=logits
+    rayo-convert reader.onnx -o reader.weights --weights int8
 
 It prints what it recognised and decided (attention rewritten for a key/value cache, sizes
 made symbols, ops it could not convert) and exits 1, naming every op it cannot convert, when
@@ -19,7 +20,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__
+from . import __version__, quantise
 from .convert import Options, convert_file
 from .ir import ConvertError
 
@@ -92,12 +93,29 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--input-shape", action="append", default=[], metavar="NAME=D,D,...",
                     help="the shape of an input whose sizes the file leaves open")
     ap.add_argument("--metadata", help="a JSON object for the file's metadata")
+    ap.add_argument("--int8-tensors", default="all", metavar="CLASSES",
+                    help="with --weights int8 for a TFLite or ONNX model: the weights quantised, "
+                         "by class: dense, conv1d, embedding, comma-separated (default all)")
+    ap.add_argument("--int8-min-size", type=int, default=1024, metavar="N",
+                    help="with --weights int8: weights with fewer than N values stay float32 "
+                         "(default 1024, as TFLite's converter)")
     ap.add_argument("--graph", action="store_true", help="print the graph written")
     ap.add_argument("-q", "--quiet", action="store_true", help="print nothing but errors")
     ap.add_argument("--version", action="version", version=f"rayo-convert {__version__}")
     a = ap.parse_args(argv)
     if Path(a.model).is_dir():
         return _language_model(a)
+    # --weights for a TFLite or ONNX model: float32 (as the source holds them, the default) or
+    # int8 (quantised here); q4 is a language model's default only.
+    given = any(x == "--weights" or x.startswith("--weights=")
+                for x in (sys.argv[1:] if argv is None else argv))
+    if given and a.weights == "q4":
+        raise SystemExit("rayo-convert: --weights q4 is for language models; a TFLite or ONNX "
+                         "model takes float32 or int8")
+    try:
+        classes = quantise.parse_classes(a.int8_tensors)
+    except ConvertError as e:
+        raise SystemExit(f"rayo-convert: {e}") from e
     shapes = {}
     for s in a.input_shape:
         name, _, dims = s.partition("=")
@@ -113,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
         attention=not a.no_attention,
         input_shapes=shapes,
         metadata=json.loads(a.metadata) if a.metadata else None,
+        weights="int8" if a.weights == "int8" else "float32",
+        int8_tensors=classes,
+        int8_min_size=a.int8_min_size,
     )
     try:
         result = convert_file(a.model, opts)
