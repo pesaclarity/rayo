@@ -3,8 +3,9 @@
 [![CI](https://github.com/pesaclarity/rayo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pesaclarity/rayo/actions/workflows/ci.yml)
 
 On-device inference in plain C89 (ANSI C), for C, Dart and Flutter. A general runtime for
-small models: a graph of ops (docs/OPS.md) over a plain-weights file, with ops of your own when
-those are not enough. Pesa Clarity's question reader and reply writer run on it, on the phone,
+small models: a graph of ops (docs/OPS.md) over a plain-weights file, converted from a TFLite
+or ONNX model by `rayo-convert` (docs/CONVERTING.md), with ops of your own when those are not
+enough. Pesa Clarity's question reader and reply writer run on it, on the phone,
 offline, in the Play and the F-Droid builds alike; nothing in the library is specific to them.
 
 - **Our own engine, no Google code**: no TFLite/LiteRT, no XNNPACK, and no other library.
@@ -65,43 +66,65 @@ owns what; destroy functions accept NULL.
 ## Models
 
 A model is a plain-weights file (PCWT) with its graph in the header:
-[docs/FORMAT.md](docs/FORMAT.md); its ops are in [docs/OPS.md](docs/OPS.md). Pesa Clarity's
-are written by [pesaclarity-ml](https://github.com/pesaclarity/pesaclarity-ml).
+[docs/FORMAT.md](docs/FORMAT.md); its ops are in [docs/OPS.md](docs/OPS.md).
+`rayo-convert` writes one from a TFLite or ONNX file ([docs/CONVERTING.md](docs/CONVERTING.md));
+Pesa Clarity's are written by [pesaclarity-ml](https://github.com/pesaclarity/pesaclarity-ml)
+with it.
 `tool/make_test_models.py` (NumPy only) writes the small random models the tests use, with the
 outputs NumPy computes.
 
 ## Using rayo with your own model
 
-`examples/classifier` is a complete one: a bag-of-words classifier over token ids, with
-made-up weights.
+Start from your model's TFLite (or ONNX) file: `rayo-convert` ([docs/CONVERTING.md](docs/CONVERTING.md),
+Python, in `convert/`, no TensorFlow) writes the rayo model.
 
-1. **Write the file.** `make_model.py` writes `classifier.weights` with `tool/pcwt.py`
-   (NumPy only): the tensors, then a graph that names them.
+1. **Convert it.**
 
-   ```json
-   "symbols": {"T": 32},
-   "inputs": [{"name": "ids", "dtype": "int32", "shape": ["T"]}],
-   "nodes": [
-     {"op": "gather", "inputs": ["embedding", "ids"], "output": "vectors"},
-     {"op": "compare", "inputs": ["ids"], "output": "real", "comparison": "greater", "value": 0},
-     {"op": "masked_reduce", "inputs": ["vectors", "real"], "output": "mean", "reduction": "mean"},
-     {"op": "dense", "inputs": ["mean", "hidden.kernel", "hidden.bias"], "output": "hidden",
-      "activation": "relu"},
-     {"op": "dense", "inputs": ["hidden", "out.kernel", "out.bias"], "output": "logits"},
-     {"op": "softmax", "inputs": ["logits"], "output": "probabilities"}
-   ],
-   "outputs": [{"name": "probabilities", "node": "probabilities"}]
+   ```sh
+   pip install ./convert                     # "./convert[onnx]" for ONNX
+   rayo-convert my_model.tflite -o my_model.weights
    ```
 
-   `hidden.kernel` is int8 (one scale per output), so that layer runs as TFLite's
-   dynamic-range kernels do; the rest are float32.
+   It maps every op to rayo's ([docs/OPS.md](docs/OPS.md)), fuses dense layers with their
+   bias and activation, 1-D convolutions (dilated ones too, as TFLite writes them) and layer
+   norms, keeps int8 weights int8 (run as TFLite's dynamic-range kernels run them), and makes
+   a sequence input's length a size symbol `T`. A causal transformer, which the file holds as
+   a whole-sequence graph, is rewritten to decode token by token with a key/value cache. It
+   prints what it decided, and refuses what rayo cannot run, naming each op, its index and
+   why. Options rename and split inputs, pick and order outputs, and turn the rewrites off.
 
-2. **Run it from C.** `classify.c` loads the file, binds `T` to the number of ids, writes them
-   into the input in place, runs, and reads the probabilities in place:
-   `classify classifier.weights 4 17 9`. `tool/ci/examples.sh` checks it against NumPy in CI.
+2. **Run it from C.** Load the file, make a session, bind the symbols, write the inputs in
+   place, run, read the outputs in place: `rayo_model_create`, `rayo_session_create`,
+   `rayo_session_bind(s, "T", n)`, `rayo_session_input`, `rayo_session_run`,
+   `rayo_session_output`. A converted decoder runs the prompt with `P = 0, T = n`, then one
+   token per run with `T = 1` at `P = n, n + 1, ...`.
 
 3. **Or from Dart**, as in [Use](#use): `RayoModel.load(bytes)`, `RayoSession(model)`,
    `bind('T', ids.length)`, `inputInt32(0).setAll(0, ids)`, `run()`, `outputFloat32(0)`.
+
+`tool/ci/convert.sh` converts Pesa Clarity's released Ask reader and writer
+(`tests/ask/*.tflite`) and runs rayo's C tests on them: every reader label as TFLite's, the
+writer's next token at all 2243 recorded steps, decoding with its cache (about 1 ms a reply).
+
+**Writing the file by hand.** `examples/classifier` is a model written without a converter:
+`make_model.py` writes `classifier.weights` with `tool/pcwt.py` (NumPy only), the tensors and
+a graph that names them, and `classify.c` runs it (`classify classifier.weights 4 17 9`,
+checked against NumPy in CI by `tool/ci/examples.sh`):
+
+```json
+"symbols": {"T": 32},
+"inputs": [{"name": "ids", "dtype": "int32", "shape": ["T"]}],
+"nodes": [
+  {"op": "gather", "inputs": ["embedding", "ids"], "output": "vectors"},
+  {"op": "compare", "inputs": ["ids"], "output": "real", "comparison": "greater", "value": 0},
+  {"op": "masked_reduce", "inputs": ["vectors", "real"], "output": "mean", "reduction": "mean"},
+  {"op": "dense", "inputs": ["mean", "hidden.kernel", "hidden.bias"], "output": "hidden",
+   "activation": "relu"},
+  {"op": "dense", "inputs": ["hidden", "out.kernel", "out.bias"], "output": "logits"},
+  {"op": "softmax", "inputs": ["logits"], "output": "probabilities"}
+],
+"outputs": [{"name": "probabilities", "node": "probabilities"}]
+```
 
 **Ops of your own.** If your graph needs an op rayo does not have, write it in C (`prepare`,
 `infer` and `run`; `include/rayo/op.h`) and pass it to `rayo_model_create_with`. See the end
@@ -133,8 +156,10 @@ src/kernels/      generic.c, x86.c (SSE4.1/AVX2), x86_vnni.c, neon.c, neon_dotpr
                   quantize.c, select.c (which kernels this CPU runs)
 src/model.c, src/session.c, src/sha256/
 lib/              the Dart API: bindings/, model.dart, session.dart, isolate_runner.dart, ...
-tests/            the C tests (tests/test_*.c), test models, and the real Ask models (tests/ask)
+tests/            the C tests (tests/test_*.c), test models, and the real Ask models (tests/ask,
+                  with the TFLite files they were converted from)
 tools/            bench.c: timing helpers for programs that time a model, op by op
+convert/          rayo-convert, TFLite and ONNX models to rayo models (Python), and its tests
 examples/         classifier/: a small model of its own, end to end;
                   ask/: Pesa Clarity's reader and writer against TFLite's recordings, timed
 ```
@@ -217,9 +242,10 @@ tool/check   # what CI runs and this computer can: lint, C tests, sanitisers, An
 generic, SSE4.1 and AVX2 builds, each kernel set, AVX-VNNI where the runner has it), under
 ASan, LSan and UBSan, natively on Linux arm64 (NEON, and SDOT where the CPU has it), on
 armv7 under QEMU, on macOS arm64, the Android NDK builds with a size budget, and the Dart
-package on Linux and macOS. On `main` a bench job reports the timings in the job summary.
+package on Linux and macOS. On `main` a bench job reports the timings in the job summary. The `convert` job runs
+rayo-convert's tests and converts the Ask models from TFLite and runs them.
 
-To protect `main`, require these checks: `lint`, `linux-x86_64 (gcc)`, `linux-x86_64 (clang)`,
+To protect `main`, require these checks: `lint`, `convert`, `linux-x86_64 (gcc)`, `linux-x86_64 (clang)`,
 `sanitizers`, `linux-arm64`, `linux-armv7`, `macos`, `android`, `dart (ubuntu-24.04)`,
 `dart (macos-15)`.
 

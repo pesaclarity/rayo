@@ -1,7 +1,8 @@
 # rayo's ops
 
 Every op a graph can name (docs/FORMAT.md), with its inputs, attributes, output, and what it
-does with int8 weights. A program can add its own ops through `include/rayo/op.h` (see the
+does with int8 weights ([CONVERTING.md](CONVERTING.md) says which TFLite and ONNX ops become
+which). A program can add its own ops through `include/rayo/op.h` (see the
 end of this page). `rayo_op_builtin(i)` lists the built-in ones at run time.
 
 Notes for every op:
@@ -18,12 +19,30 @@ Notes for every op:
 
 ## Elementwise
 
-### `add`
+### Binary: `add`, `sub`, `mul`, `div`, `maximum`, `minimum`, `squared_difference`
 
 | | |
 | --- | --- |
-| Inputs | a, b: float32, of one shape |
-| Output | a + b |
+| Inputs | a, b: float32. Either may be a float32 weight (a bias, a scale, a mask) |
+| Output | the broadcast shape: `a + b`, `a - b`, `a * b`, `a / b`, the larger, the smaller, `(a - b)²` |
+
+Shapes broadcast as NumPy's do: aligned at the innermost dimension, a missing dimension or a
+dimension of 1 repeating. Each value is one float32 operation, as TFLite's float kernels.
+
+### Unary
+
+`neg`, `abs`, `square`, `sqrt`, `rsqrt` (`1 / sqrt(x)`), `exp`, `log`, `tanh`, `sigmoid`
+(`1 / (1 + exp(-x))`), `relu`, `relu6` (`min(max(x, 0), 6)`), `gelu_erf`
+(`0.5 x (1 + erf(x / sqrt 2))`) and `gelu_tanh` (`0.5 x (1 + tanh(sqrt(2 / pi) (x + 0.044715
+x³)))`).
+
+| | |
+| --- | --- |
+| Inputs | x: float32 |
+| Output | x's shape, the function of each value |
+
+`exp`, `sqrt`, `rsqrt` and `gelu_erf` are rayo's float maths (`src/core/mathx.c`); `log`,
+`tanh`, `sigmoid` and `gelu_tanh` are C89's double functions rounded to float.
 
 ### `compare`
 
@@ -82,12 +101,51 @@ Keras models often mask a max by subtracting a large number from the padding,
 `max(x * m - (1 - m) * 1e4)`. For a 0/1 mask that is `"reduction": "max", "fill": -10000`,
 bit for bit. A masked average, `sum(x * m) / max(sum(m), 1)`, is `"reduction": "mean"`.
 
+### `reduce`
+
+| | |
+| --- | --- |
+| Inputs | x: float32 |
+| Attributes | `reduction`: `sum`, `mean`, `max`, `min` or `prod` (required). `axis`: default -1 (negative counts from the end). `keepdims`: 1 keeps the axis with size 1 (default 0) |
+| Output | x's shape without the axis (or with it as 1) |
+
+The values are combined in float32 in order along the axis, as TFLite's reference kernels do;
+`mean` divides the sum by the count. A rank-1 input needs `keepdims`.
+
 ### `last_row`
 
 | | |
 | --- | --- |
 | Inputs | x `[T, C]` |
 | Output | `[C]`: row T - 1 |
+
+## Moving values
+
+These take float32 or int32 and copy; none computes.
+
+### `reshape`
+
+| | |
+| --- | --- |
+| Inputs | x |
+| Attributes | `shape`: a list of sizes (whole numbers or size symbols) with at most one -1, the size that makes the count match |
+| Output | x's values in that shape |
+
+### `transpose`
+
+| | |
+| --- | --- |
+| Inputs | x |
+| Attributes | `perm`: dimension i of the output is dimension `perm[i]` of x |
+| Output | x's values, dimensions reordered |
+
+### `slice`
+
+| | |
+| --- | --- |
+| Inputs | x |
+| Attributes | `begin`, `size`: a size per dimension (whole numbers or size symbols; a size of -1 is the rest of that dimension) |
+| Output | the block of x from `begin` of `size` |
 
 ## Linear layers
 
@@ -134,6 +192,18 @@ Keras' `gelu`). It is fused into the layer.
   p`) on its own, as TFLite does when it runs one as `SPACE_TO_BATCH_ND` and a convolution.
 - **Padding:** positions outside the sequence count as float zeros, which is the zero point
   in int8.
+
+### `matmul`
+
+| | |
+| --- | --- |
+| Inputs | a `[..., M, K]`; b `[..., K, N]`, an activation or a float32 weight |
+| Attributes | `transpose_a`, `transpose_b`: 1 reads a as `[..., K, M]` or b as `[..., N, K]` (default 0) |
+| Output | `[..., M, N]` |
+
+A float32 product of activations, such as attention's scores when a model is converted op by
+op; the dimensions before the last two broadcast. Each sum is in float32, in order. For a
+layer with weights use `dense`, which takes int8.
 
 ### `layer_norm`
 

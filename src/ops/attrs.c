@@ -102,3 +102,33 @@ rayo_status rayo_attr_size(const rayo_op_spec *spec, const char *key, rayo_i32 f
 rayo_i32 rayo_size_value(rayo_size_attr a, const rayo_i32 *symbols) {
   return a.symbol >= 0 ? symbols[a.symbol] : a.value;
 }
+
+rayo_status rayo_attr_sizes(const rayo_op_spec *spec, const char *key, rayo_i32 lo,
+                            rayo_sizes_attr *out, rayo_message *msg) {
+  const rayo_json *v = rayo_json_get(spec->json, key);
+  size_t i;
+  if (!v || v->kind != RAYO_JSON_ARRAY || v->length > RAYO_MAX_RANK) {
+    return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: %s must be a list of at most %d sizes",
+                     spec->output, key, RAYO_MAX_RANK);
+  }
+  out->count = (rayo_i32)v->length;
+  for (i = 0; i < v->length; i++) {
+    const rayo_json *item = v->items[i];
+    const char *name = rayo_json_as_string(item);
+    rayo_size_attr *a = &out->items[i];
+    a->symbol = -1;
+    a->value = 0;
+    if (name) {
+      a->symbol = spec->symbol(spec->graph, name);
+      if (a->symbol < 0) {
+        return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: %s names no symbol %s", spec->output, key,
+                         name);
+      }
+    } else if (!rayo_json_as_int(item, &a->value) || a->value < lo ||
+               a->value > (rayo_i32)RAYO_MAX_DIM) {
+      return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: %s must hold sizes from %ld", spec->output,
+                       key, (long)lo);
+    }
+  }
+  return RAYO_OK;
+}

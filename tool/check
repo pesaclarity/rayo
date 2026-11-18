@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 tool/ci/models.sh
 tool/ci/lint.sh
 tool/ci/examples.sh cc
+tool/ci/convert.sh cc
 for cc in gcc clang; do
   command -v "$cc" >/dev/null || continue
   tool/ci/test.sh "$cc"
