@@ -5,7 +5,8 @@ Written from the conventional commit titles on `main` at each release.
 ## Unreleased
 
 - Hardened against untrusted model files and text (docs/SECURITY.md):
-  - **Fixed:** the tokeniser read freed memory on texts over about 128 bytes with a
+  - **Fixed:** a bind that failed left a node's output without its memory, so the next run
+    wrote through NULL plus an offset; the tokeniser read freed memory on texts over about 128 bytes with a
     byte-level or Metaspace pre-tokeniser (it copied bytes of a buffer into the same buffer
     while growing it), and gave wrong ids for them; a session's plan could wrap around on
     32-bit systems (armeabi-v7a) for a crafted graph and give a buffer smaller than its
