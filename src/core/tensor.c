@@ -7,6 +7,8 @@ size_t rayo_dtype_size(rayo_dtype dtype) {
       return 4;
     case RAYO_DTYPE_I8:
       return 1;
+    case RAYO_DTYPE_I4: /* weights only, never planned */
+      return 0;
   }
   return 0;
 }

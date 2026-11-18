@@ -30,7 +30,7 @@ build_tests() {
     wrap+=(-DRAYO_TEST_COUNT_ALLOCS -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc)
   fi
   # shellcheck disable=SC2046
-  "$cc" "${C89_FLAGS[@]}" "${INCLUDES[@]}" -Itests "$@" $(lib_sources) tests/*.c -lm \
+  "$cc" "${C89_FLAGS[@]}" "${INCLUDES[@]}" -Itests "$@" $(lib_sources) tests/*.c -lm -lpthread \
     "${wrap[@]}" -o "$out"
 }
 
@@ -41,7 +41,7 @@ build_tool() {
   shift 3
   # shellcheck disable=SC2046
   "$cc" "${C89_FLAGS[@]}" "${INCLUDES[@]}" -Itools "$@" $(lib_sources) tools/bench.c \
-    "$src" -lm -o "$out"
+    "$src" -lm -lpthread -o "$out"
 }
 
 # run_tests BINARY: the whole suite with each kernel set the build has.

@@ -6,12 +6,16 @@
 self-attention so a decoder runs token by token with a key/value cache, and refuses what rayo
 cannot run, naming each op, its index in the source and why.
 
-It is Python, outside the C library, in [`convert/`](../convert). It needs NumPy and the
-`tflite` package (the flatbuffers code generated from TFLite's schema), and `onnx` for ONNX;
-not TensorFlow.
+It also converts a Hugging Face decoder-only **language model** (a directory with
+`config.json`, `*.safetensors` and `tokenizer.json`): see [Language models](#language-models).
+
+It is Python, outside the C library, in [`convert/`](../convert). It needs NumPy alone for
+language models; the `tflite` package (the flatbuffers code generated from TFLite's schema)
+for TFLite files, `onnx` for ONNX, and `jinja2` to write a language model's chat template.
+Never TensorFlow or torch.
 
 ```sh
-pip install ./convert            # or "./convert[onnx]"; or from git:
+pip install "./convert[tflite]"  # "./convert[onnx]", "./convert[chat]"; or from git:
 pip install "rayo-convert @ git+https://github.com/pesaclarity/rayo@<commit>#subdirectory=convert"
 rayo-convert model.tflite -o model.weights
 ```
@@ -284,3 +288,60 @@ int8 included; `rayo_convert.runtime` builds rayo's C library from a checkout an
 converted file (`Session.bind`, `run`, `output`), as the tests do
 (`convert/tests/`): every synthetic model is checked against the reference, the ONNX ones
 against ONNX's own reference evaluator, and the Ask models against TFLite's recordings.
+
+## Language models
+
+```sh
+pip install "./convert[chat]"         # NumPy and jinja2
+rayo-convert SmolLM2-135M-Instruct/ -o smollm2-135m.weights --weights q4 --context 2048
+```
+
+The directory is a Hugging Face model as downloaded: `config.json`, `model.safetensors` (or
+shards with `model.safetensors.index.json`), `tokenizer.json`, and, when it has them,
+`tokenizer_config.json` and `generation_config.json`. The safetensors are read with NumPy
+(float32, float16 or bfloat16), one tensor at a time, so converting takes about one tensor's
+memory.
+
+**What is read from config.json**, and nothing else: the layers, the hidden size, the heads and
+key/value heads, the head size (`head_dim`, or hidden / heads), the feed-forward size, the
+vocabulary, the norm's `rms_norm_eps`, `hidden_act` (silu, gelu, gelu_pytorch_tanh), the
+rotary embedding's `rope_theta`, `partial_rotary_factor` and `rope_scaling` (none, linear,
+llama3, dynamic), `tie_word_embeddings`, and `max_position_embeddings`. The tensors are found
+by the names the Llama family uses (`model.layers.{i}.self_attn.q_proj.weight`, ...), which
+Llama, Mistral, Qwen2, SmolLM and others share; optional q, k and v biases (Qwen2) are used
+when they are there, and fused `qkv_proj` and `gate_up_proj` tensors (Phi-3) are split.
+Anything else (an op rayo has none for, a scaling that depends on the length, a sliding window
+shorter than the context, logit soft-capping, a norm with a bias) is refused, naming it.
+
+**What is written:**
+
+- the graph: `gather`, then per layer `rms_norm`, three `dense`, two `rope`, two
+  `cache_write`, `attention` (grouped-query), `dense`, `add`, `rms_norm`, two `dense`,
+  `swiglu`, `dense`, `add`; then `last_row`, `rms_norm` and the output `dense` (the embedding
+  again when it is tied). Symbols `T` (new tokens a run, at most `--chunk`) and `P` (tokens in
+  the cache); the cache's states hold `--context` positions of the key/value heads.
+- the weights: every matrix as `--weights` says (`q4`: int4 groups of 32, the
+  [FORMAT.md](FORMAT.md) layout; `int8`: one scale per row; `float32`), the norms and biases
+  in float32, the rotary frequencies as a float32 weight;
+- the metadata: the shapes, the stop tokens (`eos_token_ids`), `bos_token_id`,
+  `add_bos_token`, and `chat_turns`: the model's own chat template (from
+  tokenizer_config.json) rendered by jinja2 around marker texts and cut into the pieces before
+  and after each turn, so a C program applies the template with no template engine;
+- `MODEL.tokenizer.json`, a copy of tokenizer.json, which rayo's tokeniser reads
+  (`include/rayo/text.h`).
+
+| Option | |
+| --- | --- |
+| `--weights q4\|int8\|float32` | the matrices' form (default q4) |
+| `--context N` | the longest context, in tokens (default 2048, at most the model's own); the cache is planned for it |
+| `--chunk N` | the most prompt tokens one run takes (default 64) |
+| `--positions last\|all` | the last position's logits (default; what generation needs) or every one's |
+| `--name`, `--metadata` | as for TFLite models |
+
+The tests (`convert/tests/test_hf.py`) build tiny random Llama-style models in the test, write
+them as Hugging Face directories, convert them and compare rayo's logits with a NumPy
+reference written from the models' definition (`convert/tests/llama_ref.py`): float32 within
+2e-5 at every position, with and without the cache, with Qwen2's biases, fused projections,
+an untied head, gelu, and bfloat16 files; int8 and q4 with the same next token at the fixed
+prompts. `convert/tests/test_tokenizer.py` compares rayo's tokeniser with the tokenizers
+library on tokenizer.json files it trains on synthetic text.

@@ -13,6 +13,7 @@
 library;
 
 export 'src/errors.dart' show RayoException;
+export 'src/generator.dart' show RayoGenerator, RayoTokenizer;
 export 'src/isolate_runner.dart' show runInIsolate;
 export 'src/library.dart'
     show rayoAvailable, rayoBuiltinOps, rayoSha256, rayoVersion;

@@ -7,12 +7,14 @@
 #include "core/arena.h"
 #include "format/pcwt.h"
 #include "graph/graph.h"
+#include "platform/platform.h"
 #include "rayo/model.h"
 
 struct rayo_model {
-  rayo_u8 *file; /* owned, RAYO_ALIGN-aligned copy; the weights point into it */
+  const rayo_u8 *file; /* the weights point into it: `map`'s bytes */
   size_t file_size;
-  rayo_arena arena; /* owns the header, the graph and the packed weights */
+  rayo_file_map map; /* owned: a copy of the caller's bytes, or the mapped file */
+  rayo_arena arena;  /* owns the header, the graph and the packed weights */
   rayo_pcwt pcwt;
   rayo_graph graph;
   const char *metadata; /* JSON text */

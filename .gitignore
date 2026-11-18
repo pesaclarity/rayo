@@ -6,3 +6,5 @@ pubspec.lock
 __pycache__/
 *.egg-info/
 .pytest_cache/
+examples/chat/chat
+*.a

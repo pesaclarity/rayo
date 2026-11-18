@@ -197,3 +197,178 @@ external void rayo_session_memory(
   Pointer<RayoSessionHandle> session,
   Pointer<RayoMemoryInfo> out,
 );
+
+// Language models (rayo/generate.h, rayo/text.h, rayo_model_load).
+
+final class RayoTokenizerHandle extends Opaque {}
+
+final class RayoGeneratorHandle extends Opaque {}
+
+/// `rayo_model_options`.
+final class RayoModelOptions extends Struct {
+  external Pointer<Void> ops;
+
+  @Int()
+  external int opCount;
+
+  @Int()
+  external int readFile;
+}
+
+/// `rayo_sampler_options`.
+final class RayoSamplerOptions extends Struct {
+  @Float()
+  external double temperature;
+
+  @Int32()
+  external int topK;
+
+  @Float()
+  external double topP;
+
+  @Float()
+  external double minP;
+
+  @Float()
+  external double repetitionPenalty;
+
+  @Uint32()
+  external int seed;
+}
+
+/// `rayo_generator_options`.
+final class RayoGeneratorOptions extends Struct {
+  external RayoSamplerOptions sampling;
+
+  @Int()
+  external int threads;
+
+  @Int32()
+  external int maxTokens;
+}
+
+@Native<
+  Int32 Function(
+    Pointer<Uint8>,
+    Pointer<RayoModelOptions>,
+    Pointer<Pointer<RayoModelHandle>>,
+    Pointer<RayoMessage>,
+  )
+>()
+external int rayo_model_load(
+  Pointer<Uint8> path,
+  Pointer<RayoModelOptions> options,
+  Pointer<Pointer<RayoModelHandle>> out,
+  Pointer<RayoMessage> msg,
+);
+
+@Native<Int Function()>(isLeaf: true)
+external int rayo_cpu_fast_cores();
+
+@Native<
+  Int32 Function(
+    Pointer<Uint8>,
+    Pointer<Pointer<RayoTokenizerHandle>>,
+    Pointer<RayoMessage>,
+  )
+>()
+external int rayo_tokenizer_load(
+  Pointer<Uint8> path,
+  Pointer<Pointer<RayoTokenizerHandle>> out,
+  Pointer<RayoMessage> msg,
+);
+
+@Native<Void Function(Pointer<RayoTokenizerHandle>)>()
+external void rayo_tokenizer_destroy(Pointer<RayoTokenizerHandle> tokenizer);
+
+@Native<
+  Pointer<Uint8> Function(Pointer<RayoTokenizerHandle>, Int32, Pointer<Size>)
+>(isLeaf: true)
+external Pointer<Uint8> rayo_tokenizer_piece(
+  Pointer<RayoTokenizerHandle> tokenizer,
+  int id,
+  Pointer<Size> size,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<RayoModelHandle>,
+    Pointer<RayoTokenizerHandle>,
+    Pointer<RayoGeneratorOptions>,
+    Pointer<Pointer<RayoGeneratorHandle>>,
+    Pointer<RayoMessage>,
+  )
+>()
+external int rayo_generator_create(
+  Pointer<RayoModelHandle> model,
+  Pointer<RayoTokenizerHandle> tokenizer,
+  Pointer<RayoGeneratorOptions> options,
+  Pointer<Pointer<RayoGeneratorHandle>> out,
+  Pointer<RayoMessage> msg,
+);
+
+@Native<Void Function(Pointer<RayoGeneratorHandle>)>()
+external void rayo_generator_destroy(Pointer<RayoGeneratorHandle> generator);
+
+@Native<
+  Int32 Function(
+    Pointer<RayoGeneratorHandle>,
+    Pointer<Uint8>,
+    Pointer<Uint8>,
+    Pointer<RayoMessage>,
+  )
+>()
+external int rayo_generator_chat(
+  Pointer<RayoGeneratorHandle> generator,
+  Pointer<Uint8> system,
+  Pointer<Uint8> user,
+  Pointer<RayoMessage> msg,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<RayoGeneratorHandle>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<RayoMessage>,
+  )
+>()
+external int rayo_generator_prompt(
+  Pointer<RayoGeneratorHandle> generator,
+  Pointer<Uint8> text,
+  int size,
+  Pointer<RayoMessage> msg,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<RayoGeneratorHandle>,
+    Pointer<Int32>,
+    Pointer<RayoMessage>,
+  )
+>()
+external int rayo_generator_next(
+  Pointer<RayoGeneratorHandle> generator,
+  Pointer<Int32> token,
+  Pointer<RayoMessage> msg,
+);
+
+@Native<Void Function(Pointer<RayoGeneratorHandle>)>()
+external void rayo_generator_reset(Pointer<RayoGeneratorHandle> generator);
+
+@Native<Int32 Function(Pointer<RayoGeneratorHandle>)>(isLeaf: true)
+external int rayo_generator_position(Pointer<RayoGeneratorHandle> generator);
+
+@Native<Int32 Function(Pointer<RayoGeneratorHandle>)>(isLeaf: true)
+external int rayo_generator_context(Pointer<RayoGeneratorHandle> generator);
+
+@Native<Int Function(Pointer<RayoGeneratorHandle>)>(isLeaf: true)
+external int rayo_generator_can_chat(Pointer<RayoGeneratorHandle> generator);
+
+@Native<Int Function(Pointer<RayoGeneratorHandle>)>(isLeaf: true)
+external int rayo_generator_threads(Pointer<RayoGeneratorHandle> generator);
+
+@Native<Pointer<Uint8> Function(Pointer<RayoGeneratorHandle>)>(isLeaf: true)
+external Pointer<Uint8> rayo_generator_kernels(
+  Pointer<RayoGeneratorHandle> generator,
+);

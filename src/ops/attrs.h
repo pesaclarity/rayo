@@ -7,7 +7,8 @@
 typedef enum rayo_activation {
   RAYO_ACT_NONE,
   RAYO_ACT_RELU,
-  RAYO_ACT_GELU_ERF /* 0.5 x (1 + erf(x / sqrt 2)), as Keras' gelu */
+  RAYO_ACT_GELU_ERF, /* 0.5 x (1 + erf(x / sqrt 2)), as Keras' gelu */
+  RAYO_ACT_SILU      /* x / (1 + exp(-x)) */
 } rayo_activation;
 
 /* A size given as a whole number or a size symbol's name. */
@@ -45,8 +46,11 @@ rayo_status rayo_attr_size(const rayo_op_spec *spec, const char *key, rayo_i32 f
 rayo_status rayo_attr_sizes(const rayo_op_spec *spec, const char *key, rayo_i32 lo,
                             rayo_sizes_attr *out, rayo_message *msg);
 
-/* "activation": "none" (or absent), "relu" or "gelu_erf". */
+/* "activation": "none" (or absent), "relu", "gelu_erf" or "silu". */
 rayo_status rayo_attr_activation(const rayo_op_spec *spec, rayo_activation *out, rayo_message *msg);
+
+/* x / (1 + exp(-x)), in double, rounded once (SiLU, also called swish). */
+float rayo_silu(float x);
 
 /* Attribute `key` as a number in double, or `fallback` when absent. */
 rayo_status rayo_attr_double(const rayo_op_spec *spec, const char *key, double fallback,

@@ -73,6 +73,15 @@ rayo_status rayo_linear_pack(const rayo_op_spec *spec, const rayo_weight *kernel
   }
   lin->bias = b;
   if (kernel->dtype == RAYO_DTYPE_I8) return pack_i8(spec, kernel, arena, lin, msg);
+  if (kernel->dtype == RAYO_DTYPE_I4) {
+    if (k % RAYO_Q4_GROUP != 0 || kernel->group_size != RAYO_Q4_GROUP) {
+      return rayo_fail(msg, RAYO_ERR_UNSUPPORTED, "node %s: an int4 kernel needs groups of %d",
+                       spec->output, RAYO_Q4_GROUP);
+    }
+    lin->w4 = kernel->data;
+    lin->gscale = kernel->scales;
+    return RAYO_OK;
+  }
   lin->wf = kernel->data;
   return RAYO_OK;
 }
@@ -83,6 +92,8 @@ static float activate(rayo_activation act, float v) {
       return v < 0.0f ? 0.0f : v;
     case RAYO_ACT_GELU_ERF:
       return 0.5f * v * (1.0f + rayo_erff(v * 0.70710678118654752f));
+    case RAYO_ACT_SILU:
+      return rayo_silu(v);
     case RAYO_ACT_NONE:
       break;
   }

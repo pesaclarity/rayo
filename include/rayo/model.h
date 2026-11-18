@@ -16,7 +16,7 @@ typedef struct rayo_model rayo_model;
 
 /* Memory a model or a session holds, in bytes. */
 typedef struct rayo_memory_info {
-  size_t weights;  /* the model's copy of the file, and packed weights */
+  size_t weights;  /* the model's file (copied, or mapped), and packed weights */
   size_t arena;    /* a session's activations and scratch, planned once */
   size_t overhead; /* bookkeeping: graph, plans, tables */
 } rayo_memory_info;
@@ -37,12 +37,25 @@ typedef struct rayo_model_options {
    * valid while the model lives. */
   const struct rayo_custom_op *const *ops;
   int op_count;
+  /* rayo_model_load only: 1 reads the file into memory of rayo's instead
+   * of mapping it. */
+  int read_file;
 } rayo_model_options;
 
 /* rayo_model_create with `options` (NULL: the defaults). */
 RAYO_API rayo_status rayo_model_create_with(const void *data, size_t size,
                                             const rayo_model_options *options, rayo_model **out,
                                             rayo_message *msg);
+
+/* Loads the model file at `path` (`options` may be NULL). The file is
+ * mapped (mmap, MapViewOfFile) and its weights are used where they are, with
+ * no copy: the system reads their pages as they are touched and may drop
+ * them again under memory pressure, so a model costs what a run touches.
+ * Where the system cannot map files (or with options->read_file), the file
+ * is read into memory instead. The file must not change while the model
+ * lives. */
+RAYO_API rayo_status rayo_model_load(const char *path, const rayo_model_options *options,
+                                     rayo_model **out, rayo_message *msg);
 
 /* Frees `model` (NULL is fine). Destroy its sessions first. */
 RAYO_API void rayo_model_destroy(rayo_model *model);

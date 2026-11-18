@@ -10,6 +10,7 @@
 #include "core/json.h"
 #include "core/tensor.h"
 #include "kernels/kernels.h"
+#include "platform/platform.h"
 #include "rayo/error.h"
 #include "rayo/op.h"
 
@@ -20,6 +21,7 @@ typedef struct rayo_exec {
   const rayo_kernels *kernels; /* chosen for this CPU when the session was made */
   void *scratch;               /* at least the bytes `infer` asked for, RAYO_ALIGN-aligned */
   const rayo_i32 *symbols;     /* the size symbols' current values */
+  rayo_pool *pool;             /* the session's threads, for rayo_pool_run; NULL: one */
 } rayo_exec;
 
 /* Looks a size symbol up by name: its index, or -1. */

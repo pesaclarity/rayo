@@ -4,3 +4,5 @@ tflite==2.18.0
 flatbuffers==25.12.19
 onnx==1.23.2
 pytest==9.2.0
+jinja2==3.1.6
+tokenizers==0.23.3

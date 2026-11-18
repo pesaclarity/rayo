@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # The library for each Android ABI with the NDK (ANDROID_NDK_HOME), strict
 # C89 at -Werror, as the build hook builds it; fails if a stripped .so is
-# over BUDGET_KB (default 150). With SUMMARY set, a Markdown table too.
+# over BUDGET_KB (default 200: 150 until the language-model path, whose
+# tokeniser, sampler, generator, Unicode tables and kernels add about 60 KB).
+# The chat example is built for the phones' ABIs too, as
+# docs/RUNNING-SLMS.md does. With SUMMARY set, a Markdown table too.
 source "$(dirname "$0")/common.sh"
 
 ndk="${ANDROID_NDK_HOME:?set ANDROID_NDK_HOME}"
 bin="$(echo "$ndk"/toolchains/llvm/prebuilt/*/bin)"
-budget=${BUDGET_KB:-150}
+budget=${BUDGET_KB:-200}
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 printf '{\n  global:\n    rayo_*;\n  local:\n    *;\n};\n' >"$out/rayo.map"
@@ -31,6 +34,12 @@ for abi in "aarch64-linux-android24:arm64-v8a:" "armv7a-linux-androideabi24:arme
   # shellcheck disable=SC2046,SC2086
   "$bin/clang" --target="$target" "${C89_FLAGS[@]}" "${INCLUDES[@]}" -Itests $flags -O2 \
     $(lib_sources) tests/*.c -lm -o "$out/tests-$name"
+  if [ "$name" != x86_64 ]; then
+    make -s clean
+    make -s CC="$bin/clang --target=$target" CFLAGS="-O2 $flags" LIBS=-lm
+    echo "$name: chat example $(wc -c <examples/chat/chat) bytes"
+    make -s clean
+  fi
 done
 if [ -n "${SUMMARY:-}" ]; then
   {

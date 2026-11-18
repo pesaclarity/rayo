@@ -72,8 +72,12 @@ jobs:
         run: tool/ci/test.sh ${{ matrix.cc }} -msse4.1
       - name: AVX2 build
         run: tool/ci/test.sh ${{ matrix.cc }} -mavx2 -mfma
+      - name: Plain C89 platform (files read with fread, one thread)
+        run: tool/ci/test.sh ${{ matrix.cc }} -DRAYO_NO_PLATFORM
       - name: erf, every float in [0, 4]
         run: tool/ci/erf.sh ${{ matrix.cc }}
+      - name: Chat example, built with make, a scripted conversation
+        run: tool/ci/chat.sh ${{ matrix.cc }}
 
   sanitizers:
     name: sanitizers
@@ -109,6 +113,8 @@ jobs:
         run: tool/ci/erf.sh gcc
       - name: ASan, LSan and UBSan
         run: tool/ci/sanitize.sh gcc
+      - name: Chat example, built with make, a scripted conversation
+        run: tool/ci/chat.sh gcc
 
   linux-armv7:
     name: linux-armv7
@@ -131,11 +137,20 @@ jobs:
             echo "-- kernels: $k"
             RAYO_TEST_KERNELS=$k qemu-arm "$out/tests"
           done
+      - name: Chat example under QEMU (works; QEMU's times are not a phone's)
+        run: |
+          RUNNER=qemu-arm tool/ci/chat.sh arm-linux-gnueabihf-gcc -march=armv7-a -mfpu=neon \
+            -mfloat-abi=hard -static
 
   macos:
-    name: macos
-    runs-on: macos-15
+    name: macos (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Apple silicon, and an Intel Mac: SSE4.1 and AVX2 chosen at run time.
+        os: [macos-15, macos-15-intel]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: CPU
@@ -143,11 +158,15 @@ jobs:
           {
             sysctl -n machdep.cpu.brand_string
             echo "FEAT_DotProd: $(sysctl -n hw.optional.arm.FEAT_DotProd 2>/dev/null || echo 0)"
+            echo "AVX2: $(sysctl -n hw.optional.avx2_0 2>/dev/null || echo 0)"
+            echo "physical cores: $(sysctl -n hw.physicalcpu)"
           } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: clang
         run: tool/ci/test.sh clang
       - name: erf, every float in [0, 4]
         run: tool/ci/erf.sh clang
+      - name: Chat example, built with make, a scripted conversation
+        run: tool/ci/chat.sh clang
 
   android:
     name: android
@@ -157,7 +176,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: NDK builds, size budget
         env:
-          BUDGET_KB: "150"
+          # 150 before the language-model path (tokeniser, sampler, generator, Unicode
+          # tables, Q4 kernels: about 60 KB); tool/ci/android.sh says what.
+          BUDGET_KB: "200"
         run: SUMMARY="$GITHUB_STEP_SUMMARY" ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" tool/ci/android.sh
 
   dart:

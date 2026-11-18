@@ -38,7 +38,13 @@ static rayo_status plan(rayo_session *s, rayo_message *msg) {
 }
 
 rayo_status rayo_session_create(const rayo_model *model, rayo_session **out, rayo_message *msg) {
+  return rayo_session_create_with(model, NULL, out, msg);
+}
+
+rayo_status rayo_session_create_with(const rayo_model *model, const rayo_session_options *options,
+                                     rayo_session **out, rayo_message *msg) {
   rayo_session *s;
+  int threads = options ? options->threads : 1;
   rayo_status st;
   if (!model || !out) return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "null argument");
   *out = NULL;
@@ -46,6 +52,8 @@ rayo_status rayo_session_create(const rayo_model *model, rayo_session **out, ray
   if (!s) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   s->model = model;
   rayo_kernels_best(&s->kernels);
+  if (threads < 0) threads = rayo_cpu_fast_cores();
+  s->pool = rayo_pool_create(threads);
   st = plan(s, msg);
   if (st != RAYO_OK) {
     rayo_session_destroy(s);
@@ -57,6 +65,7 @@ rayo_status rayo_session_create(const rayo_model *model, rayo_session **out, ray
 
 void rayo_session_destroy(rayo_session *session) {
   if (!session) return;
+  rayo_pool_destroy(session->pool);
   rayo_aligned_free(session->memory);
   rayo_arena_free(&session->book);
   free(session);
@@ -129,6 +138,7 @@ rayo_status rayo_session_run(rayo_session *session, rayo_message *msg) {
   exec.kernels = &session->kernels;
   exec.scratch = session->memory + session->plan.scratch_offset;
   exec.symbols = session->symbols;
+  exec.pool = session->pool;
   for (i = 0; i < g->node_count; i++) {
     const rayo_node *n = &g->nodes[i];
     rayo_status st;
@@ -171,4 +181,8 @@ void rayo_session_reset(rayo_session *session) {
   for (i = 0; i < session->model->graph.state_count; i++) {
     memset(session->values.states[i].data, 0, rayo_tensor_bytes(&session->values.states[i]));
   }
+}
+
+int rayo_session_threads(const rayo_session *session) {
+  return session ? rayo_pool_threads(session->pool) : 1;
 }

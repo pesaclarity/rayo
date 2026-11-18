@@ -14,9 +14,11 @@ offline, in the Play and the F-Droid builds alike; nothing in the library is spe
   compiler (the NDK, Xcode, clang/gcc), `-std=c89 -pedantic -Werror`. Nothing is downloaded,
   nothing is prebuilt, so F-Droid builds it offline like the rest of the app. No C++ anywhere.
   Compiler extensions (SIMD intrinsics, target attributes, CPU checks) live only in
-  `src/kernels/x86*.c` and `src/kernels/neon*.c`, behind `#if`, and those files are C89 too.
-- **Small**: the Android library is about 63 KB (arm64-v8a), 49 KB (armeabi-v7a) and 66 KB
-  (x86_64), stripped.
+  `src/kernels/x86*.c` and `src/kernels/neon*.c`, and the system's own headers (mmap,
+  threads, the CPU's cores) only in `src/platform/`, behind `#if`, with plain C89 fallbacks
+  (`-DRAYO_NO_PLATFORM`: fread and one thread); those files are C89 too.
+- **Small**: the Android library is about 151 KB (arm64-v8a), 122 KB (armeabi-v7a) and 167 KB
+  (x86_64), stripped, with the language-model path (90, 69 and 98 KB before it).
 - **Memory planned once**: a session plans every activation into one arena when it is made
   (buffers whose lifetimes do not overlap share memory); a run allocates nothing.
 - **TFLite's numbers**: int8 layers run exactly as TFLite's dynamic-range kernels do, so a
@@ -24,6 +26,10 @@ offline, in the Play and the F-Droid builds alike; nothing in the library is spe
   within 4e-5; the Ask writer: every recorded reply).
 - **Decoders**: states kept across runs (a key/value cache) and size symbols bound per run, so
   a transformer decodes word by word without recomputing the past.
+- **Small language models**: Hugging Face decoders (SmolLM2, Qwen2.5, Llama-style ones)
+  converted from safetensors, with 4-bit group-wise weights mapped from the file, grouped-query
+  attention, rotary embeddings, a tokeniser of tokenizer.json, a sampler and a generator, in
+  C89; a chat example for phones and computers: [docs/RUNNING-SLMS.md](docs/RUNNING-SLMS.md).
 
 ## Use
 
@@ -147,6 +153,7 @@ Each count is bounded only by overflow checks. The compile-time options are in
 ```
 include/rayo/     public headers: rayo.h (all of them), config.h (compile-time options),
                   types.h, error.h, tensor.h, model.h, session.h, op.h (your own ops),
+                  text.h (tokeniser, sampler), generate.h (text from a language model),
                   sha256.h, version.h
 src/core/         allocation, arena, JSON, tensors, messages and formatting, maths, C89 shims
 src/format/       the PCWT reader and its checks
@@ -154,6 +161,9 @@ src/graph/        the graph, shapes and the memory plan
 src/ops/          one file per op family, and the registry
 src/kernels/      generic.c, x86.c (SSE4.1/AVX2), x86_vnni.c, neon.c, neon_dotprod.c,
                   quantize.c, select.c (which kernels this CPU runs)
+src/platform/     mapped files, threads and the CPU's fast cores (POSIX, Win32, or C89)
+src/text/         the tokeniser (tokenizer.json), its patterns and Unicode tables, the
+                  sampler and the generator
 src/model.c, src/session.c, src/sha256/
 lib/              the Dart API: bindings/, model.dart, session.dart, isolate_runner.dart, ...
 tests/            the C tests (tests/test_*.c), test models, and the real Ask models (tests/ask,
@@ -161,20 +171,22 @@ tests/            the C tests (tests/test_*.c), test models, and the real Ask mo
 tools/            bench.c: timing helpers for programs that time a model, op by op
 convert/          rayo-convert, TFLite and ONNX models to rayo models (Python), and its tests
 examples/         classifier/: a small model of its own, end to end;
-                  ask/: Pesa Clarity's reader and writer against TFLite's recordings, timed
+                  ask/: Pesa Clarity's reader and writer against TFLite's recordings, timed;
+                  chat/: a language model, a conversation or a prompt (make builds it)
 ```
 
 ## Kernels
 
-The int8 products have a generic C version and SIMD ones, each checked against the generic one
-in the tests:
+The int8 and 4-bit products have a generic C version and SIMD ones, each checked against the
+generic one in the tests (the 4-bit ones bit for bit):
 
 | Build | Baseline | Chosen at run time when the CPU has it |
 | --- | --- | --- |
 | Android arm64-v8a | NEON (ARMv8.0) | SDOT dot product (ARMv8.2) |
 | Android armeabi-v7a | NEON | |
-| Android x86_64 | SSE4.1 | AVX-VNNI |
+| Android x86_64 | SSE4.1 | AVX2, AVX-VNNI |
 | Linux x86_64 | AVX2 | AVX-VNNI |
+| macOS x86_64, any x86 built with gcc or clang | what the flags give | SSE4.1, AVX2, AVX-VNNI |
 
 ## Speed
 
@@ -246,8 +258,9 @@ package on Linux and macOS. On `main` a bench job reports the timings in the job
 rayo-convert's tests and converts the Ask models from TFLite and runs them.
 
 To protect `main`, require these checks: `lint`, `convert`, `linux-x86_64 (gcc)`, `linux-x86_64 (clang)`,
-`sanitizers`, `linux-arm64`, `linux-armv7`, `macos`, `android`, `dart (ubuntu-24.04)`,
-`dart (macos-15)`.
+`sanitizers`, `linux-arm64`, `linux-armv7`, `macos (macos-15)`, `macos (macos-15-intel)`,
+`android`, `dart (ubuntu-24.04)`, `dart (macos-15)`. The chat example runs a scripted
+conversation in the Linux, arm64, armv7 and macOS jobs (`tool/ci/chat.sh`).
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/); the changelog is
 written from them.

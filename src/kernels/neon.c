@@ -50,6 +50,53 @@ void rayo_gemm_i8_neon(const rayo_i8 *RAYO_RESTRICT a, size_t lda, size_t m,
   }
 }
 
+/* Lane l: the sum of x[4l .. 4l + 3] * y[4l .. 4l + 3], exact. */
+static int32x4_t dot4(int8x16_t x, int8x16_t y) {
+  const int32x4_t lo = vpaddlq_s16(vmull_s8(vget_low_s8(x), vget_low_s8(y)));
+  const int32x4_t hi = vpaddlq_s16(vmull_s8(vget_high_s8(x), vget_high_s8(y)));
+#if defined(__aarch64__)
+  return vpaddq_s32(lo, hi);
+#else
+  return vcombine_s32(vpadd_s32(vget_low_s32(lo), vget_high_s32(lo)),
+                      vpadd_s32(vget_low_s32(hi), vget_high_s32(hi)));
+#endif
+}
+
+/* 4-bit weights: a group's 16 bytes unpacked to its low and high halves
+ * (minus 8), products in lanes of four, scaled in float and added into
+ * eight lanes, as the generic kernel does. */
+static float dot_q4(const rayo_i8 *a, const float *as, const rayo_u8 *w, const float *ws,
+                    size_t groups) {
+  const uint8x16_t low = vdupq_n_u8(15);
+  const int8x16_t eight = vdupq_n_s8(8);
+  float32x4_t acc0 = vdupq_n_f32(0.0f), acc1 = acc0;
+  float lanes[8];
+  size_t g;
+  for (g = 0; g < groups; g++) {
+    const uint8x16_t b = vld1q_u8(w + g * 16);
+    const int8x16_t wl = vsubq_s8(vreinterpretq_s8_u8(vandq_u8(b, low)), eight);
+    const int8x16_t wh = vsubq_s8(vreinterpretq_s8_u8(vshrq_n_u8(b, 4)), eight);
+    const float d = as[g] * ws[g];
+    acc0 = vaddq_f32(acc0, vmulq_n_f32(vcvtq_f32_s32(dot4(vld1q_s8(a + g * 32), wl)), d));
+    acc1 = vaddq_f32(acc1, vmulq_n_f32(vcvtq_f32_s32(dot4(vld1q_s8(a + g * 32 + 16), wh)), d));
+  }
+  vst1q_f32(lanes, acc0);
+  vst1q_f32(lanes + 4, acc1);
+  return rayo_q4_lanes_sum(lanes);
+}
+
+void rayo_gemm_q4_neon(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale, size_t m,
+                       const rayo_u8 *RAYO_RESTRICT w, const float *RAYO_RESTRICT wscale, size_t n,
+                       size_t k, float *RAYO_RESTRICT c, size_t ldc) {
+  const size_t groups = k / RAYO_Q4_GROUP;
+  size_t i, j;
+  for (j = 0; j < n; j++) {
+    const rayo_u8 *wj = w + j * (k / 2);
+    const float *sj = wscale + j * groups;
+    for (i = 0; i < m; i++) c[i * ldc + j] = dot_q4(a + i * k, ascale + i * groups, wj, sj, groups);
+  }
+}
+
 #else
 typedef int rayo_neon_unused;
 #endif

@@ -49,6 +49,24 @@ class RayoModel {
     });
   }
 
+  /// Maps the model file at [path] (mmap): its weights are used where they
+  /// are, with no copy, and cost memory only as they are read. The way to
+  /// load a language model.
+  factory RayoModel.map(String path) => using((arena) {
+    final out = arena<Pointer<c.RayoModelHandle>>();
+    final msg = arena<c.RayoMessage>();
+    check(
+      c.rayo_model_load(
+        path.toNativeUtf8(allocator: arena).cast(),
+        nullptr,
+        out,
+        msg,
+      ),
+      msg,
+    );
+    return RayoModel._(out.value);
+  });
+
   /// Reads the model file at [path].
   factory RayoModel.loadFile(String path, {String? sha256}) =>
       RayoModel.load(File(path).readAsBytesSync(), sha256: sha256);

@@ -10,12 +10,14 @@
 #include "ops/op.h"
 
 typedef struct rayo_linear {
-  rayo_dtype dtype; /* the kernel's: RAYO_DTYPE_I8 or RAYO_DTYPE_F32 */
+  rayo_dtype dtype; /* the kernel's: RAYO_DTYPE_F32, RAYO_DTYPE_I8 or RAYO_DTYPE_I4 */
   size_t out;
   size_t k;
   size_t k_padded;        /* int8: k rounded up to RAYO_K_ALIGN; float: k */
   const rayo_i8 *w8;      /* int8: [out][k_padded], zeros after k */
   const float *wf;        /* float: [out][k] */
+  const rayo_u8 *w4;      /* int4: [out][k / 2], in the file */
+  const float *gscale;    /* int4: [out][k / RAYO_Q4_GROUP], in the file */
   const rayo_i32 *rowsum; /* int8: the sum of each row */
   const float *wscale;    /* int8: each row's scale */
   const float *bias;      /* [out]; zeros when the node has none */
@@ -24,7 +26,8 @@ typedef struct rayo_linear {
 
 /* Packs `kernel` (row-major, `out` rows of `k`) and `bias` (NULL or [out]
  * float32) into `arena`. An int8 kernel must be symmetric (zero point 0)
- * with one scale per row or one in all. */
+ * with one scale per row or one in all; an int4 one is used where it is in
+ * the file, with no copy. */
 rayo_status rayo_linear_pack(const rayo_op_spec *spec, const rayo_weight *kernel, size_t out,
                              size_t k, const rayo_weight *bias, rayo_arena *arena, rayo_linear *lin,
                              rayo_message *msg);

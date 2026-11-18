@@ -160,4 +160,31 @@ void main() {
     s.bind('P', tokens.length - 1);
     expect(() => s.bind('T', 2), throwsA(isA<RayoException>()));
   });
+
+  test('a language model chats, streams and cancels', () {
+    final model = RayoModel.map('tests/models/llama-q4.weights');
+    final tokenizer = RayoTokenizer.load('tests/models/llama.tokenizer.json');
+    final g = RayoGenerator(model, tokenizer, temperature: 0, maxTokens: 6);
+    expect(g.canChat, isTrue);
+    expect(g.context, 256);
+    g.chat('hello there', system: 'be brief');
+    final first = g.reply().join();
+    expect(g.position, greaterThan(6));
+    g.reset();
+    g.chat('hello there', system: 'be brief');
+    expect(g.reply().join(), first); // greedy: the same again
+    g.chat('and the cat?');
+    var pieces = 0;
+    for (final _ in g.reply()) {
+      if (++pieces == 2) g.cancel();
+    }
+    expect(pieces, 2);
+    expect(
+      () => RayoTokenizer.load('no/such.json'),
+      throwsA(isA<RayoException>()),
+    );
+    g.close();
+    tokenizer.close();
+    model.close();
+  });
 }

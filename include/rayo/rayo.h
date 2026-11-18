@@ -4,11 +4,13 @@
 
 #include "rayo/config.h"
 #include "rayo/error.h"
+#include "rayo/generate.h"
 #include "rayo/model.h"
 #include "rayo/op.h"
 #include "rayo/session.h"
 #include "rayo/sha256.h"
 #include "rayo/tensor.h"
+#include "rayo/text.h"
 #include "rayo/types.h"
 #include "rayo/version.h"
 

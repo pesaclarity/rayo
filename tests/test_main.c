@@ -23,6 +23,9 @@ void test_compare(void);
 void test_masked_reduce(void);
 void test_custom_op(void);
 void test_general_ops(void);
+void test_llama(void);
+void test_text(void);
+void test_generator(void);
 
 unsigned char *test_read_file(const char *path, size_t *size) {
   FILE *f = fopen(path, "rb");
@@ -95,6 +98,9 @@ static const test_case tests[] = {{"arena", test_arena},
                                   {"masked_reduce", test_masked_reduce},
                                   {"custom_op", test_custom_op},
                                   {"general_ops", test_general_ops},
+                                  {"llama", test_llama},
+                                  {"text", test_text},
+                                  {"generator", test_generator},
                                   {"ask", test_ask}};
 
 int main(int argc, char **argv) {

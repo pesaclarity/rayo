@@ -21,11 +21,12 @@ void *rayo_aligned_alloc(size_t size) {
   unsigned char *raw;
   unsigned char *p;
   if (size == 0 || size > RAYO_SIZE_MAX - RAYO_ALIGN - sizeof(void *)) return NULL;
-  raw = (unsigned char *)malloc(size + RAYO_ALIGN + sizeof(void *));
+  /* calloc, not malloc and memset: a large block comes zeroed from the
+   * system, and its pages cost memory only once they are written. */
+  raw = (unsigned char *)calloc(1, size + RAYO_ALIGN + sizeof(void *));
   if (!raw) return NULL;
   p = (unsigned char *)rayo_align_pointer(raw + sizeof(void *), RAYO_ALIGN);
   memcpy(p - sizeof(void *), &raw, sizeof raw);
-  memset(p, 0, size);
   return p;
 }
 
