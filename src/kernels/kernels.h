@@ -85,6 +85,19 @@ rayo_gemm_q4_fn rayo_gemm_q3_sse41;
 rayo_gemm_i8_fn rayo_gemm_i8_avx2;
 rayo_gemm_q4_fn rayo_gemm_q4_avx2;
 rayo_gemm_q4_fn rayo_gemm_q3_avx2;
+/* The AVX2 decoder product (a single row by four weight rows, x86.c) is
+ * left out of Android builds, to keep the x86_64 library within CI's
+ * 200 KB budget: Android on x86_64 is emulators and a few Chromebooks,
+ * not phones, and without it a decoder's row takes the row by row product,
+ * the same floats a little slower. -DRAYO_AVX2_DECODE=1 puts it back, =0
+ * leaves it out elsewhere. */
+#if !defined(RAYO_AVX2_DECODE)
+#if defined(__ANDROID__)
+#define RAYO_AVX2_DECODE 0
+#else
+#define RAYO_AVX2_DECODE 1
+#endif
+#endif
 #endif
 #endif
 #if defined(__GNUC__) || defined(__clang__)

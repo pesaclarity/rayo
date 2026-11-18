@@ -199,6 +199,7 @@ RAYO_AVX2 static RAYO_INLINE void dot2_q_avx2(const rayo_i8 *a0, const rayo_i8 *
   *r1 = rayo_q4_lanes_sum(lanes);
 }
 
+#if RAYO_AVX2_DECODE
 /* One row of activations by four of weights (`stride` bytes apart, their
  * scales in st[4 * g + r]): a decoder's product, four independent sums so
  * the additions overlap. Each output's sums are exactly dot_q_avx2's. */
@@ -258,6 +259,7 @@ decode_q_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale,
   }
   return j;
 }
+#endif
 
 RAYO_AVX2 static RAYO_INLINE void gemm_q_avx2(const rayo_i8 *RAYO_RESTRICT a,
                                               const float *RAYO_RESTRICT ascale, size_t m,
@@ -290,7 +292,11 @@ RAYO_AVX2 void rayo_gemm_q4_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RA
                                  size_t m, const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                  rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
                                  size_t ldc) {
+#if RAYO_AVX2_DECODE
   const size_t from = m == 1 ? decode_q_avx2(a, ascale, w, wscale, half, n, k, c) : 0;
+#else
+  const size_t from = 0;
+#endif
   if (half) {
     gemm_q_avx2(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES, from);
   } else {
