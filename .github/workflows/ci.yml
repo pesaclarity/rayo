@@ -251,6 +251,38 @@ jobs:
           path: ${{ runner.temp }}/bench-${{ matrix.arch }}.json
           retention-days: 30
 
+  # On pull requests only, never blocking CI: the bench job's programs built from the pull
+  # request's base and from its head, run in turn on one runner, as a before/after table in
+  # the job summary (tool/ci/bench_compare.sh), with the CPU and its instructions.
+  bench-compare:
+    name: bench-compare (${{ matrix.os }})
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            flags: -mavx2 -mfma
+          - os: ubuntu-24.04-arm
+            flags: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: NumPy (the synthetic language model is written with it)
+        run: python -m pip install numpy==2.5.3
+      - name: Before and after
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: SUMMARY="$GITHUB_STEP_SUMMARY" tool/ci/bench_compare.sh "$BASE_SHA" clang ${{ matrix.flags }}
+
   # On main only, never blocking CI, and never committing to main: adds the run's numbers
   # to the `bench` branch (results/, history.csv, README.md, the table as SVG and PNGs,
   # tool/ci/bench_publish.sh), which the README's image is read from; then screenshots the
