@@ -8,28 +8,67 @@ or ONNX model by `rayo-convert` (docs/CONVERTING.md), with ops of your own when 
 enough. Pesa Clarity's question reader and reply writer run on it, on the phone,
 offline, in the Play and the F-Droid builds alike; nothing in the library is specific to them.
 
-- **Our own engine, no Google code**: no TFLite/LiteRT, no XNNPACK, and no other library.
-  Portable C first, SIMD where it pays.
-- **Built from source, in C89**: a Dart build hook compiles `src/` with the platform's C
-  compiler (the NDK, Xcode, clang/gcc), `-std=c89 -pedantic -Werror`. Nothing is downloaded,
-  nothing is prebuilt, so F-Droid builds it offline like the rest of the app. No C++ anywhere.
-  Compiler extensions (SIMD intrinsics, target attributes, CPU checks) live only in
-  `src/kernels/x86*.c` and `src/kernels/neon*.c`, and the system's own headers (mmap,
-  threads, the CPU's cores) only in `src/platform/`, behind `#if`, with plain C89 fallbacks
-  (`-DRAYO_NO_PLATFORM`: fread and one thread); those files are C89 too.
-- **Small**: the Android library is about 151 KB (arm64-v8a), 122 KB (armeabi-v7a) and 167 KB
-  (x86_64), stripped, with the language-model path (90, 69 and 98 KB before it).
-- **Memory planned once**: a session plans every activation into one arena when it is made
-  (buffers whose lifetimes do not overlap share memory); a run allocates nothing.
-- **TFLite's numbers**: int8 layers run exactly as TFLite's dynamic-range kernels do, so a
-  model exported from TFLite gives the same outputs (the Ask reader: every label, probabilities
-  within 4e-5; the Ask writer: every recorded reply).
-- **Decoders**: states kept across runs (a key/value cache) and size symbols bound per run, so
-  a transformer decodes word by word without recomputing the past.
-- **Small language models**: Hugging Face decoders (SmolLM2, Qwen2.5, Llama-style ones)
-  converted from safetensors, with 4-bit group-wise weights mapped from the file, grouped-query
-  attention, rotary embeddings, a tokeniser of tokenizer.json, a sampler and a generator, in
-  C89; a chat example for phones and computers: [docs/RUNNING-SLMS.md](docs/RUNNING-SLMS.md).
+## What rayo can do
+
+- **Plain C89, and nothing else.** Every C file builds with gcc and clang as `-std=c89
+  -pedantic -Werror` ([C89](#c89)). No C++, no Google code (no TFLite/LiteRT, no XNNPACK), no
+  other library. A Dart build hook compiles `src/` with the platform's C compiler (the NDK,
+  Xcode, clang/gcc): nothing is downloaded or prebuilt, so F-Droid builds it offline. SIMD
+  intrinsics live only in `src/kernels/x86*.c` and `src/kernels/neon*.c`, and the system's
+  headers (mmap, threads, the CPU's cores) only in `src/platform/`, with plain C89 fallbacks.
+- **Every common CPU, the best kernels picked at run time.** Generic C everywhere; SSE4.1,
+  AVX2 and AVX-VNNI on x86; NEON and the ARMv8.2 dot product (SDOT) on ARM, chosen from what
+  the CPU has when the program runs ([Kernels](#kernels)). Android (arm64-v8a, armeabi-v7a,
+  x86_64), Linux (x86_64, arm64, armv7) and macOS (Apple silicon, Intel) are tested in CI.
+- **int8 and int4 weights.** int8 layers run exactly as TFLite's dynamic-range kernels (the
+  Ask reader and writer give TFLite's outputs); language models' matrices in 4-bit groups of
+  32 ([docs/FORMAT.md](docs/FORMAT.md#int4-tensors)), or int8, or float32.
+- **Weights mapped from the file**, not copied (mmap; `MapViewOfFile` on Windows); a plain
+  C89 build (`-DRAYO_NO_PLATFORM`) reads them with fread.
+- **Zero allocations per run.** A session plans every activation into one arena when it is
+  made (buffers whose lifetimes do not overlap share memory); a run allocates nothing, which
+  the tests count.
+- **Threads**, the same results bit for bit with any number: one by default, or the CPU's
+  fast cores (a phone's big and prime cores, not its little ones).
+- **41 ops, and your own**: dense, conv1d, matmul, grouped-query attention, rotary
+  embeddings, RMS and layer norms, gather, softmax, reductions, elementwise ops
+  ([docs/OPS.md](docs/OPS.md)); ops of your own in C through `include/rayo/op.h`.
+- **A converter for TFLite, ONNX and Hugging Face safetensors.** `rayo-convert` (Python,
+  NumPy; never TensorFlow or torch) maps the ops, fuses layers, and refuses what rayo cannot
+  run, naming the op and why ([docs/CONVERTING.md](docs/CONVERTING.md)).
+- **Decoding with a key/value cache.** States kept across runs and size symbols bound per
+  run; the converter rewrites a causal transformer to decode token by token.
+- **Small language models.** SmolLM2, Qwen2.5 and other Llama-style decoders, with a
+  tokeniser of tokenizer.json (byte-level BPE, Unigram), a sampler (temperature, top-k,
+  top-p, min-p, repetition penalty), a generator and the model's chat template, all in C; a
+  chat example for phones and computers ([docs/RUNNING-SLMS.md](docs/RUNNING-SLMS.md)).
+- **Dart and Flutter.** `package:rayo` (FFI): models, sessions read and written in place,
+  runs in another isolate, the tokeniser and the generator ([Use](#use)).
+- **Small.** The Android library is about 151 KB (arm64-v8a), 122 KB (armeabi-v7a) and 167 KB
+  (x86_64), stripped, the language-model path included (90, 69 and 98 KB before it); CI fails
+  a build over 200 KB.
+
+## Benchmarks
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/pesaclarity/rayo/bench/table-dark.png">
+  <img alt="rayo benchmarks: the Ask reader and writer, and a language model of SmolLM2-135M's shape, on GitHub's x86_64 and arm64 runners" src="https://raw.githubusercontent.com/pesaclarity/rayo/bench/table-light.png">
+</picture>
+
+Measured again after every push to `main`, on GitHub's ubuntu-24.04 runners (x86_64 and
+arm64): Pesa Clarity's Ask reader and writer, and a language model of SmolLM2-135M's shape
+with synthetic (random) weights, q4 and int8, on 1 and 2 threads, each a median of several
+runs. The same table as text, the history and every run's JSON are on the
+[`bench` branch](https://github.com/pesaclarity/rayo/blob/bench/README.md). GitHub-hosted
+runners are shared virtual machines, so the numbers are indicative and vary from run to run;
+they are not a phone's.
+
+How: the `bench` job (`tool/ci/bench_run.sh`) writes one JSON file a runner; `bench-publish`
+adds them, with the Android library sizes, to the `bench` branch (`results/`, `history.csv`,
+`README.md`, `table.svg` and the PNGs above, drawn with Chromium), never to `main`, then
+screenshots this page on GitHub for the rolling
+[`marketing` release](https://github.com/pesaclarity/rayo/releases/tag/marketing). Neither
+can fail CI.
 
 ## Use
 
@@ -254,7 +293,8 @@ tool/check   # what CI runs and this computer can: lint, C tests, sanitisers, An
 generic, SSE4.1 and AVX2 builds, each kernel set, AVX-VNNI where the runner has it), under
 ASan, LSan and UBSan, natively on Linux arm64 (NEON, and SDOT where the CPU has it), on
 armv7 under QEMU, on macOS arm64, the Android NDK builds with a size budget, and the Dart
-package on Linux and macOS. On `main` a bench job reports the timings in the job summary. The `convert` job runs
+package on Linux and macOS. On `main` the bench jobs report the timings in the job summary
+and publish the [benchmark table](#benchmarks). The `convert` job runs
 rayo-convert's tests and converts the Ask models from TFLite and runs them.
 
 To protect `main`, require these checks: `lint`, `convert`, `linux-x86_64 (gcc)`, `linux-x86_64 (clang)`,
