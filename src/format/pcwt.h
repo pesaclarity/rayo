@@ -13,25 +13,32 @@
 
 #define RAYO_PCWT_VERSION 1
 
-/* The one group size int4 weights may have (the kernels' RAYO_Q4_GROUP). */
+/* The one group size int4 and int3 weights may have (the kernels'
+ * RAYO_Q4_GROUP), and the bytes of a group of each. */
 #define RAYO_PCWT_INT4_GROUP 32
+#define RAYO_PCWT_INT4_GROUP_BYTES 16
+#define RAYO_PCWT_INT3_GROUP_BYTES 12
 
 /* One tensor of the file. An int8 tensor's real values are
  * `scales[c] * (value - zero_point)`, `c` its index along `axis` (-1: one
  * scale for the whole tensor). An int4 tensor holds two values a byte in
  * groups of `group_size` along its innermost dimension (docs/FORMAT.md):
- * its real values are `scales[group] * (value - 8)`. */
+ * its real values are `scales[group] * (value - 8)`; an int3 tensor 12
+ * bytes a group, `scales[group] * (value - 4)`. Group scales are float32 or
+ * float16 (`scales_half`), at `group_scales`. */
 typedef struct rayo_weight {
   const char *name;
-  rayo_dtype dtype; /* RAYO_DTYPE_F32, RAYO_DTYPE_I8 or RAYO_DTYPE_I4 */
+  rayo_dtype dtype; /* RAYO_DTYPE_F32, RAYO_DTYPE_I8, RAYO_DTYPE_I4 or RAYO_DTYPE_I3 */
   rayo_shape shape;
   size_t count; /* elements; with their bytes below 2^31 */
   const void *data;
-  const float *scales; /* int8 and int4 */
+  const float *scales; /* int8; int4 and int3 with float32 scales */
   size_t scale_count;
   rayo_i32 zero_point;
   rayo_i32 axis;
-  rayo_i32 group_size; /* int4 only */
+  rayo_i32 group_size;      /* int4 and int3 */
+  const void *group_scales; /* int4 and int3: float32, or float16 with scales_half */
+  rayo_bool scales_half;    /* int4 and int3 */
 } rayo_weight;
 
 typedef struct rayo_pcwt {
@@ -39,6 +46,9 @@ typedef struct rayo_pcwt {
   const char *model; /* the header's "model" */
   rayo_weight *weights;
   size_t weight_count;
+  /* The tokeniser's table (the header's "tokenizer"), or NULL. */
+  const rayo_u8 *tokenizer;
+  size_t tokenizer_size;
 } rayo_pcwt;
 
 /* Reads the `size` bytes at `file`, which must be 4-byte aligned and stay

@@ -17,6 +17,7 @@
 
 #include "rayo/error.h"
 #include "rayo/export.h"
+#include "rayo/model.h"
 #include "rayo/types.h"
 
 #ifdef __cplusplus
@@ -33,6 +34,24 @@ RAYO_API rayo_status rayo_tokenizer_create(const char *json, size_t size, rayo_t
 
 /* The same, from the file at `path`. */
 RAYO_API rayo_status rayo_tokenizer_load(const char *path, rayo_tokenizer **out, rayo_message *msg);
+
+/* The tokeniser whose table rayo-convert wrote into `model`'s file
+ * (docs/FORMAT.md), read where it is in the mapped file: nothing is parsed
+ * or copied but its few patterns. `model` must outlive it.
+ * RAYO_ERR_UNSUPPORTED when the file has no table. */
+RAYO_API rayo_status rayo_tokenizer_from_model(const rayo_model *model, rayo_tokenizer **out,
+                                               rayo_message *msg);
+
+/* The tokeniser of a table (docs/FORMAT.md) of `size` bytes at `table`,
+ * 4-byte aligned, which must outlive it: read where it is. */
+RAYO_API rayo_status rayo_tokenizer_create_table(const void *table, size_t size,
+                                                 rayo_tokenizer **out, rayo_message *msg);
+
+/* The tokeniser's table: `*size` bytes at `*table`, owned by the tokeniser
+ * (or its model). A tokeniser read from a tokenizer.json has one too, the
+ * same bytes rayo-convert writes for that file. */
+RAYO_API rayo_status rayo_tokenizer_table(const rayo_tokenizer *tokenizer, const void **table,
+                                          size_t *size);
 
 RAYO_API void rayo_tokenizer_destroy(rayo_tokenizer *tokenizer);
 

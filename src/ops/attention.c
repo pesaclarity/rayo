@@ -6,7 +6,12 @@
  *
  * As TFLite runs Keras' attention: scores = (q · k) * scale, softmax, then
  * the weighted sum of v; a hidden key adds -1e9 there, which is exactly a
- * zero weight in float32, so hidden keys are skipped here. */
+ * zero weight in float32, so hidden keys are skipped here.
+ *
+ * k and v may be int8 with a scale per row and group (a session's int8
+ * cache, from cache_write): each group's products are summed in float32
+ * over the int8 values and then scaled, `scale_g * sum(q[e] * k8[e])`, and
+ * the weighted sum adds `(p_j * scale_g) * v8[e]`. */
 #include "core/mathx.h"
 #include "core/message.h"
 #include "ops/attrs.h"
@@ -45,13 +50,22 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
   return s;
 }
 
+/* k or v: float32, or int8 whose groups hold whole heads or split them
+ * evenly. */
+static rayo_bool kv_ok(const rayo_tensor *t, rayo_i32 hd) {
+  if (t->dtype == RAYO_DTYPE_F32) return RAYO_TRUE;
+  return t->dtype == RAYO_DTYPE_I8 && t->group > 0 && hd > 0 &&
+         (t->group % hd == 0 || hd % t->group == 0);
+}
+
 static rayo_status infer(const void *params, const rayo_tensor *in, const rayo_i32 *symbols,
                          rayo_tensor *out, size_t *scratch, rayo_message *msg) {
   const attention_params *p = params;
   const rayo_shape *q = &in[0].shape, *k = &in[1].shape, *v = &in[2].shape;
   (void)symbols;
-  if (in[0].dtype != RAYO_DTYPE_F32 || in[1].dtype != RAYO_DTYPE_F32 ||
-      in[2].dtype != RAYO_DTYPE_F32 || q->rank != 2 || k->rank != 2 || v->rank != 2 ||
+  if (in[0].dtype != RAYO_DTYPE_F32 || !kv_ok(&in[1], q->dims[1] / p->heads) ||
+      !kv_ok(&in[2], q->dims[1] / p->heads) || in[1].dtype != in[2].dtype ||
+      in[1].group != in[2].group || q->rank != 2 || k->rank != 2 || v->rank != 2 ||
       q->dims[1] % p->heads != 0 || k->dims[1] != q->dims[1] / p->heads * p->kv_heads ||
       v->dims[1] != k->dims[1] || v->dims[0] != k->dims[0] || k->dims[0] < q->dims[0]) {
     return rayo_fail(msg, RAYO_ERR_SHAPE,
@@ -91,9 +105,46 @@ static void attend(const float *qi, const float *k, const float *v, size_t d, si
   }
 }
 
+/* attend with int8 k and v (rows of d values, groups of `group` with
+ * `ks` and `vs` holding d / group scales a row), the head's first column
+ * at `col`. */
+static void attend_i8(const float *qi, const rayo_i8 *k, const float *ks, const rayo_i8 *v,
+                      const float *vs, size_t d, size_t col, size_t group, size_t hd, size_t seen,
+                      float scale, float *w, float *out) {
+  const size_t sub = group < hd ? group : hd, per_row = d / group;
+  float top = -RAYO_FLT_BIG, sum = 0.0f, inv;
+  size_t j, e, b;
+  for (j = 0; j < seen; j++) {
+    const rayo_i8 *kj = k + j * d + col;
+    float dot = 0.0f;
+    for (b = 0; b < hd; b += sub) {
+      float part = 0.0f;
+      for (e = b; e < b + sub; e++) part += qi[e] * (float)kj[e];
+      dot += part * ks[j * per_row + (col + b) / group];
+    }
+    w[j] = dot * scale;
+    top = w[j] > top ? w[j] : top;
+  }
+  for (j = 0; j < seen; j++) {
+    w[j] = rayo_expf(w[j] - top);
+    sum += w[j];
+  }
+  inv = 1.0f / sum;
+  for (e = 0; e < hd; e++) out[e] = 0.0f;
+  for (j = 0; j < seen; j++) {
+    const float pj = w[j] * inv;
+    const rayo_i8 *vj = v + j * d + col;
+    for (b = 0; b < hd; b += sub) {
+      const float ps = pj * vs[j * per_row + (col + b) / group];
+      for (e = b; e < b + sub; e++) out[e] += ps * (float)vj[e];
+    }
+  }
+}
+
 typedef struct attention_task {
   const attention_params *p;
-  const float *q, *k, *v;
+  const float *q;
+  const rayo_tensor *k, *v;
   float *y, *w;
   size_t t, s, d, kd, hd;
   float scale;
@@ -108,8 +159,15 @@ static void heads_of(void *context, size_t begin, size_t end) {
     const size_t kh = h / group;
     for (i = 0; i < a->t; i++) {
       const size_t seen = a->p->causal ? a->s - a->t + i + 1 : a->s;
-      attend(a->q + i * a->d + h * a->hd, a->k + kh * a->hd, a->v + kh * a->hd, a->kd, a->hd, seen,
-             a->scale, a->w + h * a->s, a->y + i * a->d + h * a->hd);
+      const float *qi = a->q + i * a->d + h * a->hd;
+      float *yi = a->y + i * a->d + h * a->hd;
+      if (a->k->dtype == RAYO_DTYPE_F32 && a->v->dtype == RAYO_DTYPE_F32) {
+        attend(qi, (const float *)a->k->data + kh * a->hd, (const float *)a->v->data + kh * a->hd,
+               a->kd, a->hd, seen, a->scale, a->w + h * a->s, yi);
+      } else {
+        attend_i8(qi, a->k->data, a->k->scales, a->v->data, a->v->scales, a->kd, kh * a->hd,
+                  (size_t)a->k->group, a->hd, seen, a->scale, a->w + h * a->s, yi);
+      }
     }
   }
 }
@@ -126,12 +184,16 @@ static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *o
   a.hd = a.d / (size_t)p->heads;
   a.scale = p->scale != 0.0f ? p->scale : 1.0f / rayo_sqrtf((float)a.hd);
   a.q = in[0].data;
-  a.k = in[1].data;
-  a.v = in[2].data;
+  a.k = &in[1];
+  a.v = &in[2];
   a.y = out->data;
   a.w = exec->scratch;
   rayo_pool_run(exec->pool, (size_t)p->heads, 1, heads_of, &a);
   return RAYO_OK;
+}
+
+rayo_i32 rayo_attention_kv_heads(const void *params) {
+  return ((const attention_params *)params)->kv_heads;
 }
 
 const rayo_op rayo_op_attention = {"attention", 3, 3, prepare, infer, run, RAYO_FALSE};

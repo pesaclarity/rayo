@@ -18,6 +18,8 @@ static rayo_status read_header(rayo_model *m, const rayo_model_options *options,
   if (meta && meta->kind != RAYO_JSON_OBJECT) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "the header's metadata is not an object");
   }
+  m->tokenizer = m->pcwt.tokenizer;
+  m->tokenizer_size = m->pcwt.tokenizer_size;
   m->metadata = meta ? rayo_arena_strndup(&m->arena, meta->raw, meta->raw_length)
                      : rayo_arena_strndup(&m->arena, "{}", 2);
   if (!m->metadata) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
@@ -61,6 +63,21 @@ rayo_status rayo_model_create_with(const void *data, size_t size, const rayo_mod
   return RAYO_OK;
 }
 
+/* The platform's hint for a rayo_access. The default: see
+ * docs/RUNNING-SLMS.md for what was measured. */
+static rayo_advice advice_of(int access) {
+  switch (access) {
+    case RAYO_ACCESS_NORMAL:
+      return RAYO_ADVICE_NORMAL;
+    case RAYO_ACCESS_WILLNEED:
+      return RAYO_ADVICE_WILLNEED;
+    case RAYO_ACCESS_RANDOM:
+      return RAYO_ADVICE_RANDOM;
+    default:
+      return RAYO_ADVICE_SEQUENTIAL;
+  }
+}
+
 rayo_status rayo_model_load(const char *path, const rayo_model_options *options, rayo_model **out,
                             rayo_message *msg) {
   rayo_model *m;
@@ -83,6 +100,7 @@ rayo_status rayo_model_load(const char *path, const rayo_model_options *options,
     rayo_model_destroy(m);
     return s;
   }
+  rayo_map_advise(&m->map, advice_of(options ? options->access : RAYO_ACCESS_DEFAULT));
   *out = m;
   return RAYO_OK;
 }

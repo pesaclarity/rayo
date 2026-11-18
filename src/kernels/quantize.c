@@ -106,24 +106,29 @@ void rayo_offset_rows(rayo_i8 *RAYO_RESTRICT q, size_t ldq, size_t rows, size_t 
 
 void rayo_quantize_groups(const float *RAYO_RESTRICT x, size_t rows, size_t k,
                           rayo_i8 *RAYO_RESTRICT q, float *RAYO_RESTRICT scale) {
-  const size_t groups = k / RAYO_Q4_GROUP;
+  rayo_quantize_groups_of(x, rows, k, RAYO_Q4_GROUP, q, scale);
+}
+
+void rayo_quantize_groups_of(const float *RAYO_RESTRICT x, size_t rows, size_t k, size_t group,
+                             rayo_i8 *RAYO_RESTRICT q, float *RAYO_RESTRICT scale) {
+  const size_t groups = k / group;
   size_t r, g, e;
   for (r = 0; r < rows; r++) {
     for (g = 0; g < groups; g++) {
-      const float *xg = x + r * k + g * RAYO_Q4_GROUP;
-      rayo_i8 *qg = q + r * k + g * RAYO_Q4_GROUP;
+      const float *xg = x + r * k + g * group;
+      rayo_i8 *qg = q + r * k + g * group;
       float top = 0.0f, inv;
-      for (e = 0; e < RAYO_Q4_GROUP; e++) {
+      for (e = 0; e < group; e++) {
         const float v = xg[e] < 0.0f ? -xg[e] : xg[e];
         top = v > top ? v : top;
       }
       if (top == 0.0f || !(top <= 3.0e38f)) {
-        for (e = 0; e < RAYO_Q4_GROUP; e++) qg[e] = 0;
+        for (e = 0; e < group; e++) qg[e] = 0;
         scale[r * groups + g] = 0.0f;
         continue;
       }
       inv = 127.0f / top;
-      for (e = 0; e < RAYO_Q4_GROUP; e++) {
+      for (e = 0; e < group; e++) {
         float v = xg[e] * inv;
         rayo_i32 iv;
         /* Written so that a NaN clamps too. */

@@ -36,6 +36,30 @@ rayo_status rayo_map_file(const char *path, rayo_bool read, rayo_file_map *out, 
 /* Releases `map` (a zeroed one is fine). */
 void rayo_unmap_file(rayo_file_map *map);
 
+/* How a mapped file will be read, for the system's read-ahead. */
+typedef enum rayo_advice {
+  RAYO_ADVICE_NORMAL,
+  RAYO_ADVICE_SEQUENTIAL, /* front to back, as a decoder reads its weights each token */
+  RAYO_ADVICE_WILLNEED,   /* soon, all of it: read ahead now */
+  RAYO_ADVICE_RANDOM
+} rayo_advice;
+
+/* Tells the system how `map` will be read (madvise); nothing where the file
+ * was read into memory or the system takes no hints. */
+void rayo_map_advise(const rayo_file_map *map, rayo_advice advice);
+
+/* Zeroed memory in whole pages from the system (mmap, VirtualAlloc; else
+ * rayo_aligned_alloc), at least RAYO_ALIGN-aligned, whose pages cost memory
+ * only once written. NULL when out of memory or `size` is 0. */
+void *rayo_pages_alloc(size_t size);
+
+/* Frees memory of rayo_pages_alloc, with the size it was asked for. */
+void rayo_pages_free(void *p, size_t size);
+
+/* Zeroes `size` bytes of memory of rayo_pages_alloc; the whole pages among
+ * them go back to the system, as if never written. */
+void rayo_pages_zero(void *p, size_t size);
+
 /* A pool of worker threads. rayo_pool_run splits [0, n) into one part per
  * thread, the caller's thread taking the first, and returns when all are
  * done. The parts depend only on n, `grain` and the pool's size, and each
@@ -63,5 +87,10 @@ void rayo_pool_run(rayo_pool *pool, size_t n, size_t grain, rayo_task_fn *fn, vo
  * highest clock in /sys; macOS: hw.perflevel0 or the physical cores), else
  * the cores online; at least 1. */
 RAYO_API int rayo_cpu_fast_cores(void);
+
+/* The threads worth running a language model on by default: on Android
+ * at most 2 of the fast cores (a low-end phone's memory bandwidth is spent
+ * by two, and the others stay for the app and cooler), elsewhere at most 4. */
+RAYO_API int rayo_cpu_default_threads(void);
 
 #endif

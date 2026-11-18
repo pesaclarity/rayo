@@ -52,7 +52,7 @@ static rayo_status infer(const void *params, const rayo_tensor *in, const rayo_i
   out->shape.dims[out->shape.rank - 1] = (rayo_i32)lin->out;
   rows = rayo_shape_outer(&x->shape);
   *scratch = 0;
-  if (lin->dtype == RAYO_DTYPE_I4) {
+  if (lin->dtype == RAYO_DTYPE_I4 || lin->dtype == RAYO_DTYPE_I3) {
     rayo_scratch_add(scratch, rows * lin->k);                                   /* q */
     rayo_scratch_add(scratch, rows * (lin->k / RAYO_Q4_GROUP) * sizeof(float)); /* scales */
   }
@@ -83,9 +83,13 @@ static void product(void *context, size_t begin, size_t end) {
   const size_t k = lin->k, n = lin->out, kp = lin->k_padded;
   if (lin->dtype == RAYO_DTYPE_F32) {
     t->kn->gemm_f32(t->x, k, t->rows, lin->wf + begin * k, k, end - begin, k, t->y + begin, n);
-  } else if (lin->dtype == RAYO_DTYPE_I4) {
-    t->kn->gemm_q4(t->q, t->qscale, t->rows, lin->w4 + begin * (k / 2),
-                   lin->gscale + begin * (k / RAYO_Q4_GROUP), end - begin, k, t->y + begin, n);
+  } else if (lin->dtype == RAYO_DTYPE_I4 || lin->dtype == RAYO_DTYPE_I3) {
+    const size_t groups = k / RAYO_Q4_GROUP;
+    const unsigned char *sc = (const unsigned char *)lin->gscale +
+                              begin * groups * (lin->gscale_half ? 2 : sizeof(float));
+    rayo_gemm_q4_fn *fn = lin->dtype == RAYO_DTYPE_I4 ? t->kn->gemm_q4 : t->kn->gemm_q3;
+    fn(t->q, t->qscale, t->rows, lin->w4 + begin * groups * lin->group_bytes, sc, lin->gscale_half,
+       end - begin, k, t->y + begin, n);
   } else {
     t->kn->gemm_i8(t->q, kp, t->rows, lin->w8 + begin * kp, kp, end - begin, kp, t->acc + begin, n);
   }
@@ -108,7 +112,7 @@ static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *o
   t.x = in[0].data;
   t.y = out->data;
   t.acc = NULL;
-  if (lin->dtype == RAYO_DTYPE_I4) {
+  if (lin->dtype == RAYO_DTYPE_I4 || lin->dtype == RAYO_DTYPE_I3) {
     q = rayo_scratch_take(&at, rows * k);
     scale = rayo_scratch_take(&at, rows * (k / RAYO_Q4_GROUP) * sizeof(float));
     rayo_quantize_groups(t.x, rows, k, q, scale);

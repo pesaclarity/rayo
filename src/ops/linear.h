@@ -10,14 +10,16 @@
 #include "ops/op.h"
 
 typedef struct rayo_linear {
-  rayo_dtype dtype; /* the kernel's: RAYO_DTYPE_F32, RAYO_DTYPE_I8 or RAYO_DTYPE_I4 */
+  rayo_dtype dtype; /* the kernel's: RAYO_DTYPE_F32, RAYO_DTYPE_I8, _I4 or _I3 */
   size_t out;
   size_t k;
   size_t k_padded;        /* int8: k rounded up to RAYO_K_ALIGN; float: k */
   const rayo_i8 *w8;      /* int8: [out][k_padded], zeros after k */
   const float *wf;        /* float: [out][k] */
-  const rayo_u8 *w4;      /* int4: [out][k / 2], in the file */
-  const float *gscale;    /* int4: [out][k / RAYO_Q4_GROUP], in the file */
+  const rayo_u8 *w4;      /* int4 and int3: [out][k / 2 or k * 3 / 8], in the file */
+  const void *gscale;     /* int4 and int3: [out][k / RAYO_Q4_GROUP], in the file */
+  rayo_bool gscale_half;  /* gscale is float16 */
+  size_t group_bytes;     /* int4 and int3: of a group of RAYO_Q4_GROUP */
   const rayo_i32 *rowsum; /* int8: the sum of each row */
   const float *wscale;    /* int8: each row's scale */
   const float *bias;      /* [out]; zeros when the node has none */

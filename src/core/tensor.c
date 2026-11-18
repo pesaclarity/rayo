@@ -8,6 +8,7 @@ size_t rayo_dtype_size(rayo_dtype dtype) {
     case RAYO_DTYPE_I8:
       return 1;
     case RAYO_DTYPE_I4: /* weights only, never planned */
+    case RAYO_DTYPE_I3:
       return 0;
   }
   return 0;
@@ -33,6 +34,16 @@ size_t rayo_tensor_bytes(const rayo_tensor *t) {
   return rayo_shape_count(&t->shape) * rayo_dtype_size(t->dtype);
 }
 
+size_t rayo_tensor_storage(const rayo_tensor *t) {
+  const size_t n = rayo_tensor_bytes(t);
+  if (t->dtype != RAYO_DTYPE_I8 || t->group <= 0) return n;
+  return (n + 3) / 4 * 4 + rayo_shape_count(&t->shape) / (size_t)t->group * sizeof(float);
+}
+
+float *rayo_tensor_scales_at(void *data, const rayo_tensor *t) {
+  return (float *)(void *)((unsigned char *)data + (rayo_tensor_bytes(t) + 3) / 4 * 4);
+}
+
 size_t rayo_shape_inner(const rayo_shape *shape) {
   return shape->rank == 0 ? 1 : (size_t)shape->dims[shape->rank - 1];
 }
@@ -50,5 +61,7 @@ rayo_tensor rayo_tensor_of_weight(const rayo_weight *w) {
   t.shape = w->shape;
   t.data = (void *)w->data; /* weights are read-only; ops never write them */
   t.weight = w;
+  t.scales = NULL;
+  t.group = 0;
   return t;
 }
