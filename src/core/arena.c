@@ -6,6 +6,8 @@
 #include "core/alloc.h"
 #include "core/compat.h"
 
+#include "core/small_begin.h"
+
 #define RAYO_ARENA_BLOCK 8192
 
 /* A block: this header, then its 16-byte aligned memory. */
@@ -69,3 +71,5 @@ void rayo_arena_free(rayo_arena *a) {
   a->head = NULL;
   a->bytes = 0;
 }
+
+#include "core/small_end.h"

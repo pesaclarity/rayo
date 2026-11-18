@@ -5,6 +5,8 @@
 
 #include "core/message.h"
 
+#include "core/small_begin.h"
+
 rayo_status rayo_attr_int(const rayo_op_spec *spec, const char *key, rayo_i32 fallback, rayo_i32 lo,
                           rayo_i32 hi, rayo_i32 *out, rayo_message *msg) {
   const rayo_json *v = rayo_json_get(spec->json, key);
@@ -139,3 +141,5 @@ rayo_status rayo_attr_sizes(const rayo_op_spec *spec, const char *key, rayo_i32 
 float rayo_silu(float x) {
   return (float)((double)x / (1.0 + exp(-(double)x)));
 }
+
+#include "core/small_end.h"

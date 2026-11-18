@@ -51,9 +51,14 @@ offline, in the Play and the F-Droid builds alike; nothing in the library is spe
   ([docs/RUNNING-SLMS.md](docs/RUNNING-SLMS.md)).
 - **Dart and Flutter.** `package:rayo` (FFI): models, sessions read and written in place,
   runs in another isolate, the tokeniser and the generator ([Use](#use)).
-- **Small.** The Android library is about 171 KB (arm64-v8a), 138 KB (armeabi-v7a) and 190 KB
-  (x86_64), stripped, the language-model path included (90, 69 and 98 KB before it); CI fails
-  a build over 200 KB.
+- **Untrusted models and text.** Every size and offset of a file is checked, with limits on
+  what one file or text can make rayo allocate or compute, typed errors and never a crash;
+  fuzzed, sanitised and statically analysed in CI, built hardened; and a model's SHA-256 and
+  Ed25519 signature can be required before rayo reads it, for models downloaded over the air
+  ([docs/SECURITY.md](docs/SECURITY.md)).
+- **Small.** The Android library is about 178 KB (arm64-v8a), 146 KB (armeabi-v7a) and 197 KB
+  (x86_64), stripped and hardened, the language-model path and signature checks included (90,
+  69 and 98 KB before the language-model path); CI fails a build over 200 KB.
 
 ## Benchmarks
 
@@ -109,6 +114,9 @@ model.close();
 - `rayoAvailable()` says whether the native library loaded, so an app can fall back.
 - Errors (a damaged file, a size that does not fit, an id out of range) throw
   `RayoException`; the C library never aborts on bad input.
+- `integrity: RayoIntegrity(publicKey: key, signature: sig)` on `load`, `loadFile` and `map`
+  refuses a model that is not signed by `key` before reading it (`rayoVerify`, `rayoVerifyFile`
+  check bytes and files alone): see [docs/SECURITY.md](docs/SECURITY.md).
 
 From C, include `rayo/rayo.h`: `rayo_model_create` / `rayo_model_destroy`,
 `rayo_session_create` / `rayo_session_destroy`, `rayo_session_bind`, `rayo_session_input`,
@@ -320,14 +328,16 @@ tool/check   # what CI runs and this computer can: lint, C tests, sanitisers, An
 `main`: lint (format, C89 with gcc and clang, the same floats from a gcc and a clang build), the C tests on Linux x86_64 (gcc and clang;
 generic, SSE4.1 and AVX2 builds, each kernel set, AVX-VNNI where the runner has it), under
 ASan, LSan and UBSan, natively on Linux arm64 (NEON, and SDOT where the CPU has it), on
-armv7 under QEMU, on macOS arm64, the Android NDK builds with a size budget, and the Dart
-package on Linux and macOS. On `main` the bench jobs report the timings in the job summary
+armv7 under QEMU, on macOS arm64, the Android NDK builds (hardened, checked with readelf) with
+a size budget, and the Dart package on Linux and macOS. `fuzz` runs the libFuzzer targets for a
+minute each, and `analyze` the clang static analyzer and cppcheck
+([docs/SECURITY.md](docs/SECURITY.md#how-it-is-checked)). On `main` the bench jobs report the timings in the job summary
 and publish the [benchmark table](#benchmarks). The `convert` job runs
 rayo-convert's tests and converts the Ask models from TFLite and runs them.
 
 To protect `main`, require these checks: `lint`, `convert`, `linux-x86_64 (gcc)`, `linux-x86_64 (clang)`,
 `sanitizers`, `linux-arm64`, `linux-armv7`, `macos (macos-15)`, `macos (macos-15-intel)`,
-`android`, `dart (ubuntu-24.04)`, `dart (macos-15)`. The chat example runs a scripted
+`android`, `dart (ubuntu-24.04)`, `dart (macos-15)`, `fuzz`, `analyze`. The chat example runs a scripted
 conversation in the Linux, arm64, armv7 and macOS jobs (`tool/ci/chat.sh`).
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/); the changelog is

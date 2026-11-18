@@ -4,6 +4,8 @@
 
 #include "core/format.h"
 
+#include "core/small_begin.h"
+
 rayo_status rayo_fail(rayo_message *msg, rayo_status status, const char *fmt, ...) {
   if (msg) {
     va_list ap;
@@ -28,6 +30,12 @@ const char *rayo_status_str(rayo_status status) {
       return "out of memory";
     case RAYO_ERR_SHAPE:
       return "shape error";
+    case RAYO_ERR_LIMIT:
+      return "over a limit";
+    case RAYO_ERR_INTEGRITY:
+      return "integrity check failed";
   }
   return "unknown status";
 }
+
+#include "core/small_end.h"

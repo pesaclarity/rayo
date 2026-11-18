@@ -8,6 +8,7 @@
 
 #include "core/arena.h"
 #include "core/json.h"
+#include "core/names.h"
 #include "rayo/error.h"
 #include "rayo/types.h"
 
@@ -46,6 +47,7 @@ typedef struct rayo_pcwt {
   const char *model; /* the header's "model" */
   rayo_weight *weights;
   size_t weight_count;
+  rayo_names names; /* each weight's index by name */
   /* The tokeniser's table (the header's "tokenizer"), or NULL. */
   const rayo_u8 *tokenizer;
   size_t tokenizer_size;
@@ -53,7 +55,9 @@ typedef struct rayo_pcwt {
 
 /* Reads the `size` bytes at `file`, which must be 4-byte aligned and stay
  * alive as long as `out` is used (the weights point into it). The header
- * and the table live in `arena`. */
+ * and the table live in `arena`. A header over RAYO_MAX_HEADER_BYTES or
+ * RAYO_MAX_HEADER_VALUES, or more than RAYO_MAX_TENSORS tensors, is
+ * RAYO_ERR_LIMIT. */
 rayo_status rayo_pcwt_read(const rayo_u8 *file, size_t size, rayo_arena *arena, rayo_pcwt *out,
                            rayo_message *msg);
 

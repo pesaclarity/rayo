@@ -73,6 +73,70 @@ void main() {
     RayoModel.load(bytes, sha256: rayoSha256(bytes)).close();
   });
 
+  // RFC 8032's test 1 key; tests/models/reader.weights signed with it
+  // (tool/sign_model.py).
+  Uint8List hex(String s) => Uint8List.fromList([
+    for (var i = 0; i < s.length; i += 2)
+      int.parse(s.substring(i, i + 2), radix: 16),
+  ]);
+  final publicKey = hex(
+    'd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a',
+  );
+  final signature = hex(
+    '932b2f6915239118d8edb3e10047d8f4e6eb84fa233a7fdb68842d246cb2079b'
+    'f9385856642a59144177adbe3a0b59a8060b41881718331a01c8e86427123201',
+  );
+
+  test('verifies a signed model before reading it', () {
+    final bytes = _file('reader.weights');
+    final signed = RayoIntegrity(publicKey: publicKey, signature: signature);
+    rayoVerify(bytes, signed);
+    rayoVerifyFile('tests/models/reader.weights', signed);
+    RayoModel.load(bytes, integrity: signed).close();
+    final m = RayoModel.map('tests/models/reader.weights', integrity: signed);
+    expect(m.name, 'test-reader');
+    m.close();
+    RayoModel.load(
+      bytes,
+      integrity: RayoIntegrity(
+        sha256: rayoSha256(bytes),
+        publicKey: publicKey,
+        signature: signature,
+      ),
+    ).close();
+    // A changed byte, another key's signature, a wrong digest.
+    final damaged = Uint8List.fromList(bytes)..[bytes.length - 1] ^= 1;
+    final integrity = isA<RayoException>().having(
+      (e) => e.status,
+      'status',
+      rayoErrIntegrity,
+    );
+    expect(() => rayoVerify(damaged, signed), throwsA(integrity));
+    expect(
+      () => RayoModel.load(damaged, integrity: signed),
+      throwsA(integrity),
+    );
+    final other = Uint8List.fromList(publicKey)..[0] ^= 1;
+    expect(
+      () => RayoModel.map(
+        'tests/models/reader.weights',
+        integrity: RayoIntegrity(publicKey: other, signature: signature),
+      ),
+      throwsA(integrity),
+    );
+    expect(
+      () => RayoModel.load(bytes, integrity: RayoIntegrity(sha256: '00' * 32)),
+      throwsA(integrity),
+    );
+    expect(() => RayoIntegrity(publicKey: publicKey), throwsArgumentError);
+    expect(
+      () =>
+          RayoIntegrity(publicKey: publicKey.sublist(1), signature: signature),
+      throwsArgumentError,
+    );
+    expect(() => RayoIntegrity(sha256: 'xyz'), throwsArgumentError);
+  });
+
   test('matches NumPy, writing inputs and reading outputs in place', () {
     final m = RayoModel.load(_file('reader.weights'));
     final s = RayoSession(m);

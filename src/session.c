@@ -170,7 +170,7 @@ void rayo_session_destroy(rayo_session *session) {
 static rayo_status within_plan(const rayo_session *s, size_t scratch, rayo_message *msg) {
   const rayo_graph *g = &s->model->graph;
   rayo_i32 i;
-  if (rayo_align_up(scratch) > s->plan.scratch_bytes) {
+  if (scratch > s->plan.scratch_bytes) {
     return rayo_fail(msg, RAYO_ERR_SHAPE, "these sizes need more scratch than planned");
   }
   for (i = 0; i < g->node_count; i++) {

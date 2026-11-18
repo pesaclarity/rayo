@@ -3,7 +3,8 @@
 # C89 at -Werror, as the build hook builds it; fails if a stripped .so is
 # over BUDGET_KB (default 200: 150 until the language-model path, whose
 # tokeniser, sampler, generator, Unicode tables and kernels add about 60 KB).
-# The chat example is built for the phones' ABIs too, as
+# Each library is built hardened and checked (tool/ci/elf_check.sh). The
+# chat example is built for the phones' ABIs too, as
 # docs/RUNNING-SLMS.md does. With SUMMARY set, a Markdown table too; with
 # SIZES_JSON set, the sizes as JSON (for the benchmark table).
 source "$(dirname "$0")/common.sh"
@@ -21,11 +22,12 @@ for abi in "aarch64-linux-android24:arm64-v8a:" "armv7a-linux-androideabi24:arme
   "x86_64-linux-android24:x86_64:-msse4.2"; do
   IFS=: read -r target name flags <<<"$abi"
   # shellcheck disable=SC2046,SC2086
-  "$bin/clang" --target="$target" "${C89_FLAGS[@]}" "${INCLUDES[@]}" $flags -O3 -fPIC -shared \
-    -fvisibility=hidden -ffunction-sections -fdata-sections $(lib_sources) -lm \
+  "$bin/clang" --target="$target" "${C89_FLAGS[@]}" "${HARDEN_FLAGS[@]}" "${INCLUDES[@]}" $flags \
+    -O3 -fPIC -shared -fvisibility=hidden -ffunction-sections -fdata-sections $(lib_sources) -lm \
     -Wl,--gc-sections -Wl,--no-undefined -Wl,--version-script="$out/rayo.map" \
-    -Wl,-z,max-page-size=16384 -o "$out/librayo-$name.so"
+    -Wl,-z,max-page-size=16384 "${HARDEN_LDFLAGS[@]}" -o "$out/librayo-$name.so"
   "$bin/llvm-strip" --strip-unneeded "$out/librayo-$name.so"
+  READELF="$bin/llvm-readelf" tool/ci/elf_check.sh "$out/librayo-$name.so" || status=1
   size=$(wc -c <"$out/librayo-$name.so")
   kb=$(( (size + 1023) / 1024 ))
   verdict=ok
@@ -39,7 +41,7 @@ for abi in "aarch64-linux-android24:arm64-v8a:" "armv7a-linux-androideabi24:arme
     $(lib_sources) tests/*.c -lm -o "$out/tests-$name"
   if [ "$name" != x86_64 ]; then
     make -s clean
-    make -s CC="$bin/clang --target=$target" CFLAGS="-O2 $flags" LIBS=-lm
+    make -s CC="$bin/clang --target=$target" CFLAGS="-O2 ${HARDEN_FLAGS[*]} $flags" LIBS=-lm
     echo "$name: chat example $(wc -c <examples/chat/chat) bytes"
     make -s clean
   fi

@@ -74,7 +74,8 @@ void test_llama(void) {
   int k;
   memset(&arena, 0, sizeof arena);
   text = test_model_file("llama_expected.json", &size);
-  if (!text || rayo_json_parse((const char *)text, size, &arena, &want, NULL) != RAYO_OK) {
+  if (!text ||
+      rayo_json_parse((const char *)text, size, (size_t)-1, &arena, &want, NULL) != RAYO_OK) {
     EXPECT(0);
     free(text);
     return;

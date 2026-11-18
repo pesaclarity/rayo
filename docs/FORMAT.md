@@ -13,7 +13,12 @@ TFLite or ONNX model ([CONVERTING.md](CONVERTING.md)).
 
 All little-endian; the tensor data starts on a 4-byte boundary. rayo checks every size and
 offset against the file before it uses them, and refuses what does not fit rather than
-guessing.
+guessing; the limits of `include/rayo/config.h` bound the header, the counts and what a
+session plans ([SECURITY.md](SECURITY.md#limits)). Strings in the header are UTF-8.
+
+A file is signed as a whole, outside it: a 64-byte Ed25519 signature (RFC 8032) of all its
+bytes, conventionally `model.weights.sig`, checked with `rayo_verify` or
+`rayo_model_options.integrity` before rayo reads the file ([SECURITY.md](SECURITY.md#requiring-signed-models)).
 
 ## Header fields rayo reads
 

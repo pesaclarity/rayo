@@ -37,6 +37,8 @@
 #include <windows.h>
 #endif
 
+#include "core/small_begin.h"
+
 #if defined(RAYO_MEM_MMAP) || defined(RAYO_MEM_WIN32)
 static size_t page_size(void) {
 #if defined(RAYO_MEM_MMAP)
@@ -212,3 +214,5 @@ RAYO_API rayo_status rayo_process_memory(rayo_process_memory_info *out) {
   return RAYO_ERR_UNSUPPORTED;
 #endif
 }
+
+#include "core/small_end.h"

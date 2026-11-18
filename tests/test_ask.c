@@ -31,7 +31,8 @@ static rayo_json *load_json(rayo_arena *a, const char *name, unsigned char **tex
   size_t size = 0;
   rayo_json *root = NULL;
   *text = ask_file(name, &size);
-  if (*text && rayo_json_parse((const char *)*text, size, a, &root, NULL) != RAYO_OK) root = NULL;
+  if (*text && rayo_json_parse((const char *)*text, size, (size_t)-1, a, &root, NULL) != RAYO_OK)
+    root = NULL;
   return root;
 }
 

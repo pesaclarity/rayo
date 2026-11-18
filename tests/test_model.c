@@ -152,7 +152,8 @@ static rayo_json *expected_json(rayo_arena *a, unsigned char **text) {
   size_t size;
   rayo_json *root = NULL;
   *text = test_model_file("expected.json", &size);
-  if (*text && rayo_json_parse((const char *)*text, size, a, &root, NULL) != RAYO_OK) root = NULL;
+  if (*text && rayo_json_parse((const char *)*text, size, (size_t)-1, a, &root, NULL) != RAYO_OK)
+    root = NULL;
   return root;
 }
 
