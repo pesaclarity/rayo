@@ -232,8 +232,7 @@ rayo_status rayo_pcwt_read(const rayo_u8 *file, size_t size, rayo_arena *arena, 
       tok_end = (size_t)offset + (size_t)bytes;
     }
   }
-  s = read_tensors(tensors, file + 12 + header_len, size - 12 - header_len, weights, tok_end,
-                   msg);
+  s = read_tensors(tensors, file + 12 + header_len, size - 12 - header_len, weights, tok_end, msg);
   if (s != RAYO_OK) return s;
   out->header = header;
   out->model = rayo_json_as_string(rayo_json_get(header, "model"));
