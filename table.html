@@ -1,0 +1,63 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>rayo benchmarks</title>
+<meta name="color-scheme" content="light dark"><style>
+:root { --bg: #ffffff; --card: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0;
+        --band: #f6f8fa; --accent: #d9480f; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --card: #0d1117; --fg: #f0f6fc; --muted: #9198a1; --line: #3d444d;
+          --band: #151b23; --accent: #ff8a4c; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica,
+       Arial, sans-serif; color: var(--fg); }
+#card { width: 900px; padding: 28px 32px 22px; background: var(--card); }
+header { display: flex; justify-content: space-between; align-items: flex-end;
+         border-bottom: 2px solid var(--accent); padding-bottom: 12px; margin-bottom: 6px; }
+.brand { font-size: 34px; font-weight: 800; letter-spacing: -0.5px; line-height: 1; }
+.brand span { color: var(--accent); }
+.brand small { display: block; font-size: 14px; font-weight: 500; color: var(--muted);
+               letter-spacing: 0; margin-top: 6px; }
+.meta { text-align: right; font-size: 13px; color: var(--muted); line-height: 1.55; }
+.meta b { color: var(--fg); font-weight: 600; }
+.meta code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+             color: var(--fg); }
+table { width: 100%; border-collapse: collapse; font-size: 14px;
+        font-variant-numeric: tabular-nums; }
+th, td { padding: 7px 10px; text-align: left; vertical-align: top; }
+thead th { font-size: 16px; padding-top: 12px; }
+thead th small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
+tr.section td { background: var(--band); color: var(--muted); font-size: 12px;
+                font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+                padding-top: 6px; padding-bottom: 6px; }
+tbody tr:not(.section) td { border-bottom: 1px solid var(--line); }
+td.label { color: var(--muted); width: 38%; }
+td.num { font-weight: 600; }
+footer { margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+</style></head>
+<body><div id="card">
+<header>
+  <div class="brand">rayo<span>.</span><small>On-device inference in plain C89 · live
+  benchmarks</small></div>
+  <div class="meta"><b>2026-11-18</b> · commit <code>9d46ee3</code><br>
+  GitHub Actions · ubuntu-24.04 runners</div>
+</header>
+<table><thead><tr><th></th><th>x86_64<small>ubuntu-24.04, 4 vCPU</small></th><th>arm64<small>ubuntu-24.04-arm, 4 vCPU</small></th></tr></thead><tbody>
+<tr class="section"><td colspan="3">Machine</td></tr>
+<tr><td class="label">CPU</td><td class="num">Intel Xeon 6975P-C</td><td class="num">Neoverse-N2</td></tr>
+<tr><td class="label">Kernels chosen at run time</td><td class="num">avx-vnni</td><td class="num">neon-dotprod</td></tr>
+<tr class="section"><td colspan="3">Pesa Clarity&#x27;s Ask models · int8 · 1 thread · median</td></tr>
+<tr><td class="label">Reader, per question</td><td class="num">0.15 ms</td><td class="num">0.28 ms</td></tr>
+<tr><td class="label">Writer, per reply (≈13 tokens)</td><td class="num">0.71 ms</td><td class="num">0.73 ms</td></tr>
+<tr class="section"><td colspan="3">SmolLM2-135M shape · synthetic weights† · 128-token prompt, 64 decoded</td></tr>
+<tr><td class="label">q4 prompt tokens/s (1 / 2 threads)</td><td class="num">187 / 295</td><td class="num">101 / 183</td></tr>
+<tr><td class="label">q4 decode tokens/s (1 / 2 threads)</td><td class="num">57.4 / 89.1</td><td class="num">62.7 / 103</td></tr>
+<tr><td class="label">q4 peak memory</td><td class="num">95 MB</td><td class="num">94 MB</td></tr>
+<tr><td class="label">int8 prompt tokens/s (1 / 2 threads)</td><td class="num">504 / 693</td><td class="num">328 / 507</td></tr>
+<tr><td class="label">int8 decode tokens/s (1 / 2 threads)</td><td class="num">92.2 / 158</td><td class="num">72.7 / 115</td></tr>
+<tr><td class="label">int8 peak memory</td><td class="num">146 MB</td><td class="num">145 MB</td></tr>
+<tr class="section"><td colspan="3">Library size · stripped · whole runtime with the language-model path</td></tr>
+<tr><td class="label">Android library (.so)</td><td class="num" colspan="2">arm64-v8a 152 KB · armeabi-v7a 123 KB · x86_64 168 KB</td></tr>
+</tbody></table>
+<footer>† SmolLM2-135M shape with synthetic (random) weights, written by tool/make_synthetic_slm.py: every matrix product, the cache and the memory are the real model&#x27;s size, but the text it writes means nothing. Medians of 5 runs (Ask) and 3 (language model). GitHub-hosted runners are shared virtual machines: these numbers are indicative and vary from run to run. They are not a phone&#x27;s.</footer>
+</div></body></html>

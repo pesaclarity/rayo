@@ -1,0 +1,195 @@
+{
+  "kind": "rayo-bench-run",
+  "schema": 1,
+  "commit": "9d46ee3d660190c255d58513d2e358031f57a283",
+  "date": "2026-11-18T08:47:33Z",
+  "run_url": "https://github.com/pesaclarity/rayo/actions/runs/44269079067",
+  "synthetic_note": "SmolLM2-135M shape with synthetic (random) weights, written by tool/make_synthetic_slm.py: every matrix product, the cache and the memory are the real model's size, but the text it writes means nothing.",
+  "note": "GitHub-hosted runners are shared virtual machines: these numbers are indicative and vary from run to run. They are not a phone's.",
+  "runners": [
+    {
+      "schema": 1,
+      "runner": {
+        "label": "ubuntu-24.04",
+        "arch": "x86_64",
+        "cpu": "Intel(R) Xeon(R) 6975P-C",
+        "cores": 4,
+        "cpu_flags": [
+          "sse4_1",
+          "avx2",
+          "fma",
+          "avx_vnni",
+          "avx512f",
+          "avx512_vnni"
+        ],
+        "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+        "cflags": "-O3 -mavx2 -mfma"
+      },
+      "kernels": "avx-vnni",
+      "ask": {
+        "reader": {
+          "per_question_median_ms": 0.15,
+          "per_question_p90_ms": 0.1576,
+          "runs": 5
+        },
+        "writer": {
+          "per_reply_median_ms": 0.707,
+          "per_reply_p90_ms": 1.032,
+          "per_step_median_ms": 0.0537,
+          "runs": 5
+        }
+      },
+      "slm": [
+        {
+          "model": "SmolLM2-135M shape",
+          "weights": "q4",
+          "synthetic": true,
+          "threads": 1,
+          "prompt_tokens": 128,
+          "decode_tokens": 64,
+          "prompt_tok_s": 187.2,
+          "decode_tok_s": 57.41,
+          "peak_rss_mb": 95.0,
+          "file_mb": 80.4,
+          "runs": 3
+        },
+        {
+          "model": "SmolLM2-135M shape",
+          "weights": "q4",
+          "synthetic": true,
+          "threads": 2,
+          "prompt_tokens": 128,
+          "decode_tokens": 64,
+          "prompt_tok_s": 295.0,
+          "decode_tok_s": 89.08,
+          "peak_rss_mb": 95.1,
+          "file_mb": 80.4,
+          "runs": 3
+        },
+        {
+          "model": "SmolLM2-135M shape",
+          "weights": "int8",
+          "synthetic": true,
+          "threads": 1,
+          "prompt_tokens": 128,
+          "decode_tokens": 64,
+          "prompt_tok_s": 504.5,
+          "decode_tok_s": 92.25,
+          "peak_rss_mb": 146.1,
+          "file_mb": 129.2,
+          "runs": 3
+        },
+        {
+          "model": "SmolLM2-135M shape",
+          "weights": "int8",
+          "synthetic": true,
+          "threads": 2,
+          "prompt_tokens": 128,
+          "decode_tokens": 64,
+          "prompt_tok_s": 693.1,
+          "decode_tok_s": 157.72,
+          "peak_rss_mb": 146.1,
+          "file_mb": 129.2,
+          "runs": 3
+        }
+      ],
+      "library_so_bytes": 191024
+    },
+    {
+      "schema": 1,
+      "runner": {
+        "label": "ubuntu-24.04-arm",
+        "arch": "aarch64",
+        "cpu": "Neoverse-N2",
+        "cores": 4,
+        "cpu_flags": [
+          "asimd",
+          "asimddp",
+          "i8mm",
+          "sve",
+          "sve2",
+          "bf16"
+        ],
+        "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+        "cflags": "-O3 "
+      },
+      "kernels": "neon-dotprod",
+      "ask": {
+        "reader": {
+          "per_question_median_ms": 0.2762,
+          "per_question_p90_ms": 0.2806,
+          "runs": 5
+        },
+        "writer": {
+          "per_reply_median_ms": 0.733,
+          "per_reply_p90_ms": 1.103,
+          "per_step_median_ms": 0.057,
+          "runs": 5
+        }
+      },
+      "slm": [
+        {
+          "model": "SmolLM2-135M shape",
+          "weights": "q4",
+          "synthetic": true,
+          "threads": 1,
+          "prompt_tokens": 128,
+          "decode_tokens": 64,
+          "prompt_tok_s": 100.8,
+          "decode_tok_s": 62.68,
+          "peak_rss_mb": 94.3,
+          "file_mb": 80.4,
+          "runs": 3
+        },
+        {
+          "model": "SmolLM2-135M shape",
+          "weights": "q4",
+          "synthetic": true,
+          "threads": 2,
+          "prompt_tokens": 128,
+          "decode_tokens": 64,
+          "prompt_tok_s": 182.7,
+          "decode_tok_s": 102.58,
+          "peak_rss_mb": 94.3,
+          "file_mb": 80.4,
+          "runs": 3
+        },
+        {
+          "model": "SmolLM2-135M shape",
+          "weights": "int8",
+          "synthetic": true,
+          "threads": 1,
+          "prompt_tokens": 128,
+          "decode_tokens": 64,
+          "prompt_tok_s": 327.8,
+          "decode_tok_s": 72.67,
+          "peak_rss_mb": 145.4,
+          "file_mb": 129.2,
+          "runs": 3
+        },
+        {
+          "model": "SmolLM2-135M shape",
+          "weights": "int8",
+          "synthetic": true,
+          "threads": 2,
+          "prompt_tokens": 128,
+          "decode_tokens": 64,
+          "prompt_tok_s": 507.0,
+          "decode_tok_s": 115.03,
+          "peak_rss_mb": 145.3,
+          "file_mb": 129.2,
+          "runs": 3
+        }
+      ],
+      "library_so_bytes": 199168
+    }
+  ],
+  "library_sizes": {
+    "source": "android-ndk",
+    "bytes": {
+      "arm64-v8a": 155120,
+      "armeabi-v7a": 125336,
+      "x86_64": 171072
+    }
+  }
+}
