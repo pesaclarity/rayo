@@ -603,6 +603,8 @@ def convert_dir(src: str | Path, out: str | Path, opts: HfOptions | None = None)
     next to it (``out`` with ``.tokenizer.json``). The file's size and the notes."""
     opts = opts or HfOptions()
     src, out = Path(src), Path(out)
+    if opts.name is None:
+        opts = HfOptions(**{**opts.__dict__, "name": out.stem})
     header, tensors, notes = build(src, opts)
     size = write_file(out, header, tensors)
     tok = src / "tokenizer.json"

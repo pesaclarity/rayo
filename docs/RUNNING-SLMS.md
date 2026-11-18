@@ -163,10 +163,12 @@ yet: please send numbers from a real phone (`./chat` prints them on the way out)
 
 | Model, weights | File | Peak memory | Prompt tokens/s (1 / 2 / 4 threads) | Reply tokens/s (1 / 2 / 4 threads) |
 | --- | --- | --- | --- | --- |
-| SmolLM2-135M shape, q4 | 80 MB | 95 MB | 116 / 154 / 181 | 42 / 69 / 54 |
-| SmolLM2-135M shape, int8 | 129 MB | 146 MB | 281 / 347 / 364 | 46 / 64 / 26 |
-| SmolLM2-135M shape, float32 | 513 MB | 528 MB | 48 / 134 / 182 | 18 / 29 / 32 |
+| SmolLM2-135M shape, q4 | 80 MB | 95 MB | 129 / 175 / 211 | 41 / 74 / 52 |
+| SmolLM2-135M shape, int8 | 129 MB | 146 MB | 258 / 309 / 350 | 51 / 81 / 56 |
+| SmolLM2-135M shape, float32 | 513 MB | 528 MB | 46 / 127 / 202 | 18 / 28 / 38 |
 | Qwen2.5-0.5B shape, q4 | 295 MB | 308 MB | 48 / 76 / 115 | 12 / 21 / 30 |
 | Qwen2.5-0.5B shape, int8 | 473 MB | 491 MB | 82 / 135 / 225 | 18 / 28 / 32 |
 
-Four threads on this shared virtual machine are noisy; on a phone, measure 2 and 4.
+Medians of three runs (the Qwen2.5 shape: one run). On this x86 core int8 is faster than q4
+(its AVX-VNNI kernel does more per instruction), and q4 needs 40% less memory; on phones q4's
+smaller reads are expected to matter more. Four threads on this shared virtual machine are noisy; on a phone, measure 2 and 4.
