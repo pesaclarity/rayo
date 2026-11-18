@@ -50,6 +50,7 @@ void bench_run_ops(rayo_session *s, double *op_ms) {
   exec.kernels = &s->kernels;
   exec.scratch = s->memory + s->plan.scratch_offset;
   exec.symbols = s->symbols;
+  exec.pool = s->pool;
   for (i = 0; i < g->node_count; i++) {
     double a;
     rayo_graph_node_inputs(g, &s->model->pcwt, i, &s->values, s->values.args);
@@ -75,4 +76,23 @@ void bench_print_ops(const rayo_session *s, const double *op_ms) {
 void bench_choose_kernels(rayo_session *s, const char *name) {
   if (name && strcmp(name, "generic") == 0) rayo_kernels_generic(&s->kernels);
   if (name && strcmp(name, "simd") == 0) rayo_kernels_simd(&s->kernels);
+}
+
+void bench_print_op_kinds(const rayo_session *s, const double *op_ms) {
+  const rayo_graph *g = &s->model->graph;
+  const char *seen[64];
+  double ms[64], sum = 0;
+  int n = 0, k;
+  rayo_i32 i;
+  for (i = 0; i < g->node_count; i++) {
+    for (k = 0; k < n && strcmp(seen[k], g->nodes[i].op->name) != 0; k++) {
+    }
+    if (k == n && n < 64) {
+      seen[n] = g->nodes[i].op->name;
+      ms[n++] = 0;
+    }
+    if (k < n) ms[k] += op_ms[i];
+    sum += op_ms[i];
+  }
+  for (k = 0; k < n; k++) printf("  %-12s %5.1f%%\n", seen[k], 100 * ms[k] / sum);
 }

@@ -53,7 +53,7 @@ void test_quantize(void) {
 }
 
 static void check_i8(rayo_gemm_i8_fn *fn, rayo_i32 a_offset, const char *name) {
-  enum { M = 7, N = 9, K = 96 };
+  enum { M = 7, N = 9, K = 96 }; /* M odd: the last row alone too */
   rayo_i8 *a = malloc(M * K), *au = malloc(M * K), *w = malloc(N * K);
   rayo_i32 *want = malloc(M * N * sizeof(rayo_i32)), *got = malloc(M * N * sizeof(rayo_i32));
   rayo_i32 rowsum[N];

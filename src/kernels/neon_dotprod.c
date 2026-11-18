@@ -60,7 +60,14 @@ RAYO_DOTPROD void rayo_gemm_i8_neon_dotprod(const rayo_i8 *RAYO_RESTRICT a, size
     }
     if (j < n) rayo_gemm_i8_generic(a0, lda, 2, w + j * ldw, ldw, n - j, k, c + i * ldc + j, ldc);
   }
-  if (i < m) rayo_gemm_i8_generic(a + i * lda, lda, m - i, w, ldw, n, k, c + i * ldc, ldc);
+  if (i < m) {
+    /* The last row of an odd count (a decoder's one token): the two-row
+     * block on it twice, the second copy dropped. */
+    const rayo_i8 *a0 = a + i * lda;
+    rayo_i32 spare[4];
+    for (j = 0; j + 4 <= n; j += 4) block2x4(a0, a0, w + j * ldw, ldw, k, c + i * ldc + j, spare);
+    if (j < n) rayo_gemm_i8_generic(a0, lda, 1, w + j * ldw, ldw, n - j, k, c + i * ldc + j, ldc);
+  }
 }
 
 /* 4-bit weights as neon.c's kernel, with SDOT for the lanes of four. */

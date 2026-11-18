@@ -76,7 +76,12 @@ RAYO_VNNI void rayo_gemm_u8i8_avxvnni(const rayo_i8 *RAYO_RESTRICT a, size_t lda
     }
   }
   for (; i < m; i++) {
-    for (j = 0; j < n; j++) c[i * ldc + j] = dot_u8i8(a + i * lda, w + j * ldw, k);
+    /* The last row of an odd count (a decoder's one token): the two-row
+     * block on it twice, the second copy dropped. */
+    const rayo_i8 *a0 = a + i * lda;
+    rayo_i32 spare[4];
+    for (j = 0; j + 4 <= n; j += 4) block2x4(a0, a0, w + j * ldw, ldw, k, c + i * ldc + j, spare);
+    for (; j < n; j++) c[i * ldc + j] = dot_u8i8(a0, w + j * ldw, k);
   }
 }
 

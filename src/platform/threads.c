@@ -35,13 +35,15 @@ struct rayo_pool {
   rayo_mutex lock;
   rayo_cond wake; /* a new job, or quit */
   rayo_cond done; /* the last part of a job finished */
-  /* The job, under `lock`. */
-  unsigned long generation;
+  /* The job, under `lock`. `generation` and `pending` are also read
+   * without it, as hints while spinning (volatile, so each read is made);
+   * every decision is checked again under the lock. */
+  volatile unsigned long generation;
   rayo_task_fn *fn;
   void *context;
   size_t n, grain;
-  int pending; /* workers still on this job */
-  rayo_bool quit;
+  volatile int pending; /* workers still on this job */
+  volatile rayo_bool quit;
 };
 
 #if defined(RAYO_THREADS_POSIX)
@@ -96,12 +98,20 @@ typedef struct worker_arg {
   int index;
 } worker_arg;
 
+/* How long a thread spins on a hint before it sleeps: a decoder's ops come
+ * microseconds apart, and waking a sleeping thread costs about as much as
+ * a small op, but spinning longer would cost battery between tokens. */
+#define SPIN 20000
+
 static void work(rayo_pool *pool, int index) {
   unsigned long seen = 0;
   for (;;) {
     rayo_task_fn *fn;
     void *context;
     size_t n, grain, begin, end;
+    long spin;
+    for (spin = 0; spin < SPIN && pool->generation == seen && !pool->quit; spin++) {
+    }
     lock(&pool->lock);
     while (pool->generation == seen && !pool->quit) wait_on(&pool->wake, &pool->lock);
     if (pool->quit) {
@@ -244,6 +254,11 @@ void rayo_pool_run(rayo_pool *pool, size_t n, size_t grain, rayo_task_fn *fn, vo
   unlock(&pool->lock);
   part_of(n, grain, pool->threads, 0, &begin, &end);
   if (begin < end) fn(context, begin, end);
+  {
+    long spin;
+    for (spin = 0; spin < SPIN && pool->pending > 0; spin++) {
+    }
+  }
   lock(&pool->lock);
   while (pool->pending > 0) wait_on(&pool->done, &pool->lock);
   unlock(&pool->lock);

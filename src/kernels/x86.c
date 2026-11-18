@@ -78,7 +78,15 @@ RAYO_AVX2 void rayo_gemm_i8_avx2(const rayo_i8 *RAYO_RESTRICT a, size_t lda, siz
     }
     if (j < n) rayo_gemm_i8_generic(a0, lda, 2, w + j * ldw, ldw, n - j, k, c + i * ldc + j, ldc);
   }
-  if (i < m) rayo_gemm_i8_generic(a + i * lda, lda, m - i, w, ldw, n, k, c + i * ldc, ldc);
+  if (i < m) {
+    /* The last row of an odd count (a decoder's one token): the two-row
+     * block on it twice, the second copy dropped. */
+    const rayo_i8 *a0 = a + i * lda;
+    rayo_i32 spare[4];
+    for (j = 0; j + 4 <= n; j += 4)
+      block2x4_avx2(a0, a0, w + j * ldw, ldw, k, c + i * ldc + j, spare);
+    if (j < n) rayo_gemm_i8_generic(a0, lda, 1, w + j * ldw, ldw, n - j, k, c + i * ldc + j, ldc);
+  }
 }
 
 /* 4-bit weights: a group's 16 bytes unpacked to 32 int8 (low four bits
@@ -107,6 +115,38 @@ RAYO_AVX2 static float dot_q4_avx2(const rayo_i8 *a, const float *as, const rayo
   return rayo_q4_lanes_sum(lanes);
 }
 
+/* Two rows of activations by one of weights, each weight group unpacked
+ * once: the prompt's product. Each row's sums are exactly dot_q4_avx2's. */
+RAYO_AVX2 static void dot2_q4_avx2(const rayo_i8 *a0, const rayo_i8 *a1, const float *s0,
+                                   const float *s1, const rayo_u8 *w, const float *ws,
+                                   size_t groups, float *r0, float *r1) {
+  const __m128i low = _mm_set1_epi8(15);
+  const __m256i eight = _mm256_set1_epi8(8), ones = _mm256_set1_epi16(1);
+  __m256 acc0 = _mm256_setzero_ps(), acc1 = acc0;
+  float lanes[8];
+  size_t g;
+  for (g = 0; g < groups; g++) {
+    const __m128i b = _mm_loadu_si128((const __m128i *)(const void *)(w + g * 16));
+    const __m128i lo = _mm_and_si128(b, low), hi = _mm_and_si128(_mm_srli_epi16(b, 4), low);
+    const __m256i wv =
+        _mm256_sub_epi8(_mm256_inserti128_si256(_mm256_castsi128_si256(lo), hi, 1), eight);
+    const __m256i x0 = _mm256_loadu_si256((const __m256i *)(const void *)(a0 + g * 32));
+    const __m256i x1 = _mm256_loadu_si256((const __m256i *)(const void *)(a1 + g * 32));
+    const __m256i p0 = _mm256_madd_epi16(
+        _mm256_maddubs_epi16(_mm256_sign_epi8(x0, x0), _mm256_sign_epi8(wv, x0)), ones);
+    const __m256i p1 = _mm256_madd_epi16(
+        _mm256_maddubs_epi16(_mm256_sign_epi8(x1, x1), _mm256_sign_epi8(wv, x1)), ones);
+    acc0 =
+        _mm256_add_ps(acc0, _mm256_mul_ps(_mm256_cvtepi32_ps(p0), _mm256_set1_ps(s0[g] * ws[g])));
+    acc1 =
+        _mm256_add_ps(acc1, _mm256_mul_ps(_mm256_cvtepi32_ps(p1), _mm256_set1_ps(s1[g] * ws[g])));
+  }
+  _mm256_storeu_ps(lanes, acc0);
+  *r0 = rayo_q4_lanes_sum(lanes);
+  _mm256_storeu_ps(lanes, acc1);
+  *r1 = rayo_q4_lanes_sum(lanes);
+}
+
 RAYO_AVX2 void rayo_gemm_q4_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale,
                                  size_t m, const rayo_u8 *RAYO_RESTRICT w,
                                  const float *RAYO_RESTRICT wscale, size_t n, size_t k,
@@ -116,11 +156,13 @@ RAYO_AVX2 void rayo_gemm_q4_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RA
   for (j = 0; j < n; j++) {
     const rayo_u8 *wj = w + j * (k / 2);
     const float *sj = wscale + j * groups;
-    for (i = 0; i < m; i++)
-      c[i * ldc + j] = dot_q4_avx2(a + i * k, ascale + i * groups, wj, sj, groups);
+    for (i = 0; i + 2 <= m; i += 2) {
+      dot2_q4_avx2(a + i * k, a + (i + 1) * k, ascale + i * groups, ascale + (i + 1) * groups, wj,
+                   sj, groups, &c[i * ldc + j], &c[(i + 1) * ldc + j]);
+    }
+    if (i < m) c[i * ldc + j] = dot_q4_avx2(a + i * k, ascale + i * groups, wj, sj, groups);
   }
 }
-
 #endif
 
 /* SSE4.1 */
