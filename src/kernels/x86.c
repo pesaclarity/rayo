@@ -229,28 +229,44 @@ RAYO_AVX2 static RAYO_INLINE void dot4_q_avx2(const rayo_i8 *a, const float *as,
   c[3] = rayo_q4_lanes_sum(lanes);
 }
 
+/* A decoder's single row of activations by the weights, four rows of them
+ * at a time: the outputs done (a multiple of four; none for rows of more
+ * than RAYO_SCALE_ROW groups). Out of line, one copy whatever the scales'
+ * type. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+RAYO_AVX2 static size_t
+decode_q_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale,
+              const rayo_u8 *RAYO_RESTRICT w, const void *wscale, rayo_bool half, size_t n,
+              size_t k, float *RAYO_RESTRICT c, size_t bytes) {
+  const size_t groups = k / RAYO_Q4_GROUP;
+  float row[RAYO_SCALE_ROW], st[4 * RAYO_SCALE_ROW];
+  size_t j = 0, r, g;
+  if (groups > RAYO_SCALE_ROW) return 0;
+  for (; j + 4 <= n; j += 4) {
+    for (r = 0; r < 4; r++) {
+      const float *sr = (const float *)wscale + (j + r) * groups;
+      if (half) {
+        half_row_avx2((const rayo_u16 *)wscale + (j + r) * groups, groups, row);
+        sr = row;
+      }
+      for (g = 0; g < groups; g++) st[4 * g + r] = sr[g];
+    }
+    dot4_q_avx2(a, ascale, w + j * groups * bytes, groups * bytes, st, groups, bytes, c + j);
+  }
+  return j;
+}
+
 RAYO_AVX2 static RAYO_INLINE void gemm_q_avx2(const rayo_i8 *RAYO_RESTRICT a,
                                               const float *RAYO_RESTRICT ascale, size_t m,
                                               const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                               rayo_bool half, size_t n, size_t k,
-                                              float *RAYO_RESTRICT c, size_t ldc, size_t bytes) {
+                                              float *RAYO_RESTRICT c, size_t ldc, size_t bytes,
+                                              size_t from) {
   const size_t groups = k / RAYO_Q4_GROUP;
-  float row[RAYO_SCALE_ROW], st[4 * RAYO_SCALE_ROW];
-  size_t i, j = 0, r, g;
-  if (m == 1 && groups <= RAYO_SCALE_ROW) {
-    /* A decoder's single row: four rows of weights at a time. */
-    for (; j + 4 <= n; j += 4) {
-      for (r = 0; r < 4; r++) {
-        const float *sr = (const float *)wscale + (j + r) * groups;
-        if (half) {
-          half_row_avx2((const rayo_u16 *)wscale + (j + r) * groups, groups, row);
-          sr = row;
-        }
-        for (g = 0; g < groups; g++) st[4 * g + r] = sr[g];
-      }
-      dot4_q_avx2(a, ascale, w + j * groups * bytes, groups * bytes, st, groups, bytes, c + j);
-    }
-  }
+  float row[RAYO_SCALE_ROW];
+  size_t i, j = from;
   for (; j < n; j++) {
     const rayo_u8 *wj = w + j * groups * bytes;
     /* A row's float16 scales converted once, for all its groups and rows. */
@@ -273,10 +289,12 @@ RAYO_AVX2 void rayo_gemm_q4_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RA
                                  size_t m, const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                  rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
                                  size_t ldc) {
+  const size_t from =
+      m == 1 ? decode_q_avx2(a, ascale, w, wscale, half, n, k, c, RAYO_Q4_GROUP_BYTES) : 0;
   if (half) {
-    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES, from);
   } else {
-    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES, from);
   }
 }
 
@@ -284,10 +302,12 @@ RAYO_AVX2 void rayo_gemm_q3_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RA
                                  size_t m, const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                  rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
                                  size_t ldc) {
+  const size_t from =
+      m == 1 ? decode_q_avx2(a, ascale, w, wscale, half, n, k, c, RAYO_Q3_GROUP_BYTES) : 0;
   if (half) {
-    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES, from);
   } else {
-    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES, from);
   }
 }
 #endif
