@@ -65,74 +65,23 @@ static int32x4_t dot4(int8x16_t x, int8x16_t y) {
 #endif
 }
 
-/* Group-wise weights (kernels.h): a group unpacked to its low and high
- * halves of 16 int8 (4 bits: the low and the high four bits, minus 8;
- * 3 bits: the two-bit planes with the third bits from their bytes, minus
- * 4), products in lanes of four, scaled in float and added into eight
- * lanes, as the generic kernel does (the unpacking: neon_unpack.h). */
-static RAYO_NEON_INLINE float dot_q(const rayo_i8 *a, const float *as, const rayo_u8 *w,
-                                    const void *ws, rayo_bool half, size_t first, size_t groups,
-                                    size_t bytes) {
-  float32x4_t acc0 = vdupq_n_f32(0.0f), acc1 = acc0;
-  float lanes[8];
-  size_t g;
-  for (g = 0; g < groups; g++) {
-    int8x16_t wl, wh;
-    float d;
-    if (bytes == RAYO_Q4_GROUP_BYTES) {
-      neon_unpack_q4(w + g * bytes, &wl, &wh);
-    } else {
-      neon_unpack_q3(w + g * bytes, &wl, &wh);
-    }
-    d = as[g] * rayo_group_scale(ws, half, first + g);
-    acc0 = vaddq_f32(acc0, vmulq_n_f32(vcvtq_f32_s32(dot4(vld1q_s8(a + g * 32), wl)), d));
-    acc1 = vaddq_f32(acc1, vmulq_n_f32(vcvtq_f32_s32(dot4(vld1q_s8(a + g * 32 + 16), wh)), d));
-  }
-  vst1q_f32(lanes, acc0);
-  vst1q_f32(lanes + 4, acc1);
-  return rayo_q4_lanes_sum(lanes);
-}
-
-static RAYO_NEON_INLINE void gemm_q(const rayo_i8 *RAYO_RESTRICT a,
-                                    const float *RAYO_RESTRICT ascale, size_t m,
-                                    const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
-                                    rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
-                                    size_t ldc, size_t bytes) {
-  const size_t groups = k / RAYO_Q4_GROUP;
-  float row[RAYO_SCALE_ROW];
-  size_t i, j;
-  for (j = 0; j < n; j++) {
-    const rayo_u8 *wj = w + j * groups * bytes;
-    /* A row's float16 scales converted once, for all its groups and rows. */
-    const rayo_bool conv = half && groups <= RAYO_SCALE_ROW;
-    const void *ws = conv ? (const void *)row : wscale;
-    const rayo_bool h = conv ? RAYO_FALSE : half;
-    const size_t first = conv ? 0 : j * groups;
-    if (conv) neon_half_row((const rayo_u16 *)wscale + j * groups, groups, row);
-    for (i = 0; i < m; i++) {
-      c[i * ldc + j] = dot_q(a + i * k, ascale + i * groups, wj, ws, h, first, groups, bytes);
-    }
-  }
-}
+/* Group-wise weights (kernels.h): neon_q.h, with the lanes of four from
+ * widening multiplies, and the weights' offset subtracted. */
+#define RAYO_Q_ATTR
+#define RAYO_Q_DOT4(acc, x, y) vaddq_s32(acc, dot4(x, y))
+#define RAYO_Q_STORED 0
+#include "kernels/neon_q.h"
 
 void rayo_gemm_q4_neon(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale, size_t m,
                        const rayo_u8 *RAYO_RESTRICT w, const void *wscale, rayo_bool half, size_t n,
                        size_t k, float *RAYO_RESTRICT c, size_t ldc) {
-  if (half) {
-    gemm_q(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
-  } else {
-    gemm_q(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
-  }
+  q_gemm(a, ascale, m, w, wscale, half, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
 }
 
 void rayo_gemm_q3_neon(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale, size_t m,
                        const rayo_u8 *RAYO_RESTRICT w, const void *wscale, rayo_bool half, size_t n,
                        size_t k, float *RAYO_RESTRICT c, size_t ldc) {
-  if (half) {
-    gemm_q(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
-  } else {
-    gemm_q(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
-  }
+  q_gemm(a, ascale, m, w, wscale, half, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
 }
 #else
 typedef int rayo_neon_unused;
