@@ -31,6 +31,7 @@ rayo_status rayo_model_create(const void *data, size_t size, rayo_model **out, r
 rayo_status rayo_model_create_with(const void *data, size_t size, const rayo_model_options *options,
                                    rayo_model **out, rayo_message *msg) {
   rayo_model *m;
+  rayo_u8 *copy;
   rayo_status s;
   if (!out || (!data && size) || (options && options->op_count > 0 && !options->ops)) {
     return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "null argument");
@@ -39,14 +40,44 @@ rayo_status rayo_model_create_with(const void *data, size_t size, const rayo_mod
   if (size == 0) return rayo_fail(msg, RAYO_ERR_FORMAT, "an empty file");
   m = calloc(1, sizeof *m);
   if (!m) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
-  m->file = rayo_aligned_alloc(size);
-  if (!m->file) {
+  copy = rayo_aligned_alloc(size);
+  if (!copy) {
     free(m);
     return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory for %lu bytes",
                      (unsigned long)size);
   }
-  memcpy(m->file, data, size);
+  memcpy(copy, data, size);
+  m->map.data = copy;
+  m->map.size = size;
+  m->map.kind = RAYO_MAP_HEAP;
+  m->file = copy;
   m->file_size = size;
+  s = read_header(m, options, msg);
+  if (s != RAYO_OK) {
+    rayo_model_destroy(m);
+    return s;
+  }
+  *out = m;
+  return RAYO_OK;
+}
+
+rayo_status rayo_model_load(const char *path, const rayo_model_options *options, rayo_model **out,
+                            rayo_message *msg) {
+  rayo_model *m;
+  rayo_status s;
+  if (!out || !path || (options && options->op_count > 0 && !options->ops)) {
+    return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "null argument");
+  }
+  *out = NULL;
+  m = calloc(1, sizeof *m);
+  if (!m) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
+  s = rayo_map_file(path, options && options->read_file, &m->map, msg);
+  if (s != RAYO_OK) {
+    free(m);
+    return s;
+  }
+  m->file = m->map.data;
+  m->file_size = m->map.size;
   s = read_header(m, options, msg);
   if (s != RAYO_OK) {
     rayo_model_destroy(m);
@@ -59,7 +90,7 @@ rayo_status rayo_model_create_with(const void *data, size_t size, const rayo_mod
 void rayo_model_destroy(rayo_model *model) {
   if (!model) return;
   rayo_arena_free(&model->arena);
-  rayo_aligned_free(model->file);
+  rayo_unmap_file(&model->map);
   free(model);
 }
 

@@ -21,6 +21,28 @@ typedef struct rayo_session rayo_session;
 RAYO_API rayo_status rayo_session_create(const rayo_model *model, rayo_session **out,
                                          rayo_message *msg);
 
+/* Options for rayo_session_create_with. Zero them (memset) before setting
+ * what you need, so options added later keep their defaults. */
+typedef struct rayo_session_options {
+  /* The threads a run uses, the caller's included: 0 or 1 for one (the
+   * default), -1 for rayo_cpu_fast_cores(). The results are the same, bit
+   * for bit, with any number: work is split by output, never within a sum. */
+  int threads;
+} rayo_session_options;
+
+/* rayo_session_create with `options` (NULL: the defaults). */
+RAYO_API rayo_status rayo_session_create_with(const rayo_model *model,
+                                              const rayo_session_options *options,
+                                              rayo_session **out, rayo_message *msg);
+
+/* The threads the session runs on. */
+RAYO_API int rayo_session_threads(const rayo_session *session);
+
+/* The CPU cores worth running on: a phone's big cores (from /sys on
+ * Android and Linux), a Mac's performance or physical cores, else the cores
+ * online; at least 1. */
+RAYO_API int rayo_cpu_fast_cores(void);
+
 /* Frees `session` (NULL is fine). */
 RAYO_API void rayo_session_destroy(rayo_session *session);
 

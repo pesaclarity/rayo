@@ -7,11 +7,13 @@
 #include "graph/plan.h"
 #include "kernels/kernels.h"
 #include "model.h"
+#include "platform/platform.h"
 #include "rayo/session.h"
 
 struct rayo_session {
   const rayo_model *model;
   rayo_kernels kernels;  /* chosen for this CPU at creation */
+  rayo_pool *pool;       /* owned; NULL for one thread */
   unsigned char *memory; /* owned: the planned arena, one allocation */
   rayo_arena book;       /* owns the plan and the tensor tables */
   rayo_plan plan;

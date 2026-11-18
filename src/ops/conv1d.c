@@ -57,6 +57,10 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
     return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: size %ld does not fit the kernel or centre",
                      spec->output, (long)size);
   }
+  if (kernel->dtype == RAYO_DTYPE_I4) {
+    return rayo_fail(msg, RAYO_ERR_UNSUPPORTED, "node %s: conv1d takes float32 or int8 kernels",
+                     spec->output);
+  }
   s = rayo_attr_string(spec, "input_quantization", "tensor_phases", &quant, msg);
   if (s != RAYO_OK) return s;
   if (kernel->dtype == RAYO_DTYPE_I8 && strcmp(quant, "tensor_phases") != 0) {

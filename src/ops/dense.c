@@ -27,7 +27,7 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
   if (s != RAYO_OK) return s;
   s = rayo_attr_string(spec, "input_quantization", "rows", &quant, msg);
   if (s != RAYO_OK) return s;
-  if (kernel->dtype == RAYO_DTYPE_I8 && strcmp(quant, "rows") != 0) {
+  if (kernel->dtype != RAYO_DTYPE_F32 && strcmp(quant, "rows") != 0) {
     return rayo_fail(msg, RAYO_ERR_UNSUPPORTED, "node %s: input_quantization %s", spec->output,
                      quant);
   }
@@ -52,6 +52,10 @@ static rayo_status infer(const void *params, const rayo_tensor *in, const rayo_i
   out->shape.dims[out->shape.rank - 1] = (rayo_i32)lin->out;
   rows = rayo_shape_outer(&x->shape);
   *scratch = 0;
+  if (lin->dtype == RAYO_DTYPE_I4) {
+    rayo_scratch_add(scratch, rows * lin->k);                                   /* q */
+    rayo_scratch_add(scratch, rows * (lin->k / RAYO_Q4_GROUP) * sizeof(float)); /* scales */
+  }
   if (lin->dtype == RAYO_DTYPE_I8) {
     rayo_scratch_add(scratch, rows * lin->k_padded);               /* q */
     rayo_scratch_add(scratch, rows * sizeof(float));               /* scale */
@@ -61,34 +65,72 @@ static rayo_status infer(const void *params, const rayo_tensor *in, const rayo_i
   return RAYO_OK;
 }
 
+/* One run's product, for the threads: each computes outputs [begin, end). */
+typedef struct dense_task {
+  const rayo_linear *lin;
+  const rayo_kernels *kn;
+  size_t rows;
+  const float *x;
+  const rayo_i8 *q;
+  const float *qscale;
+  rayo_i32 *acc;
+  float *y;
+} dense_task;
+
+static void product(void *context, size_t begin, size_t end) {
+  const dense_task *t = context;
+  const rayo_linear *lin = t->lin;
+  const size_t k = lin->k, n = lin->out, kp = lin->k_padded;
+  if (lin->dtype == RAYO_DTYPE_F32) {
+    t->kn->gemm_f32(t->x, k, t->rows, lin->wf + begin * k, k, end - begin, k, t->y + begin, n);
+  } else if (lin->dtype == RAYO_DTYPE_I4) {
+    t->kn->gemm_q4(t->q, t->qscale, t->rows, lin->w4 + begin * (k / 2),
+                   lin->gscale + begin * (k / RAYO_Q4_GROUP), end - begin, k, t->y + begin, n);
+  } else {
+    t->kn->gemm_i8(t->q, kp, t->rows, lin->w8 + begin * kp, kp, end - begin, kp, t->acc + begin, n);
+  }
+}
+
 static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *out,
                        const rayo_exec *exec) {
   const rayo_linear *lin = params;
-  const float *x = in[0].data;
-  float *y = out->data;
   const size_t rows = rayo_shape_outer(&in[0].shape);
-  const size_t k = lin->k, n = lin->out, kp = lin->k_padded;
-  const rayo_kernels *kn = exec->kernels;
+  const size_t k = lin->k, kp = lin->k_padded;
   unsigned char *at = exec->scratch;
-  rayo_i8 *q;
-  float *scale;
-  rayo_i32 *zero, *acc;
+  dense_task t;
+  rayo_i8 *q = NULL;
+  float *scale = NULL;
+  rayo_i32 *zero = NULL;
   size_t r;
-  if (lin->dtype == RAYO_DTYPE_F32) {
-    kn->gemm_f32(x, k, rows, lin->wf, k, n, k, y, n);
-    rayo_linear_finish_f32(lin, y, rows);
-    return RAYO_OK;
+  t.lin = lin;
+  t.kn = exec->kernels;
+  t.rows = rows;
+  t.x = in[0].data;
+  t.y = out->data;
+  t.acc = NULL;
+  if (lin->dtype == RAYO_DTYPE_I4) {
+    q = rayo_scratch_take(&at, rows * k);
+    scale = rayo_scratch_take(&at, rows * (k / RAYO_Q4_GROUP) * sizeof(float));
+    rayo_quantize_groups(t.x, rows, k, q, scale);
+  } else if (lin->dtype == RAYO_DTYPE_I8) {
+    q = rayo_scratch_take(&at, rows * kp);
+    scale = rayo_scratch_take(&at, rows * sizeof(float));
+    zero = rayo_scratch_take(&at, rows * sizeof(rayo_i32));
+    t.acc = rayo_scratch_take(&at, rows * lin->out * sizeof(rayo_i32));
+    for (r = 0; r < rows; r++) {
+      rayo_quantize_rows(t.x, k, r, rows, r + 1, q, kp, &scale[r], &zero[r]);
+    }
+    if (t.kn->a_offset) rayo_offset_rows(q, kp, rows, k, zero, t.kn->a_offset);
   }
-  q = rayo_scratch_take(&at, rows * kp);
-  scale = rayo_scratch_take(&at, rows * sizeof(float));
-  zero = rayo_scratch_take(&at, rows * sizeof(rayo_i32));
-  acc = rayo_scratch_take(&at, rows * n * sizeof(rayo_i32));
-  for (r = 0; r < rows; r++) {
-    rayo_quantize_rows(x, k, r, rows, r + 1, q, kp, &scale[r], &zero[r]);
+  t.q = q;
+  t.qscale = scale;
+  /* Parts of 16 outputs, so each thread reads whole cache lines of y. */
+  rayo_pool_run(exec->pool, lin->out, 16, product, &t);
+  if (lin->dtype == RAYO_DTYPE_I8) {
+    rayo_linear_finish_i8(lin, t.acc, rows, scale, zero, t.y);
+  } else {
+    rayo_linear_finish_f32(lin, t.y, rows);
   }
-  if (kn->a_offset) rayo_offset_rows(q, kp, rows, k, zero, kn->a_offset);
-  kn->gemm_i8(q, kp, rows, lin->w8, kp, n, kp, acc, n);
-  rayo_linear_finish_i8(lin, acc, rows, scale, zero, y);
   return RAYO_OK;
 }
 
