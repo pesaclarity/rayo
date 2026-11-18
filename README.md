@@ -31,6 +31,10 @@ offline, in the Play and the F-Droid builds alike; nothing in the library is spe
   the tests count.
 - **Threads**, the same results bit for bit with any number: one by default, or the CPU's
   fast cores (a phone's big and prime cores, not its little ones).
+- **The same floats from every build.** Every kernel gives the same floats, and so does every
+  build: gcc or clang, `-O2` or `-O3 -mavx2 -mfma`. rayo is always compiled with
+  `-ffp-contract=off`, so no compiler fuses a multiply and an add on its own
+  ([Same floats from every build](#same-floats-from-every-build)).
 - **41 ops, and your own**: dense, conv1d, matmul, grouped-query attention, rotary
   embeddings, RMS and layer norms, gather, softmax, reductions, elementwise ops
   ([docs/OPS.md](docs/OPS.md)); ops of your own in C through `include/rayo/op.h`.
@@ -262,10 +266,30 @@ For the reader, loading the model takes about 0.2 ms and making a session about 
 copy (251 KB), the session's arena (241 KB) and 82 KB of tables. Measured with
 `examples/ask/ask_reader_check.c`, which also prints the time per op. Not yet measured on a phone.
 
+## Same floats from every build
+
+A model gives the same output floats, bit for bit, with every kernel set (generic C, SSE4.1,
+AVX2, AVX-VNNI, NEON, SDOT), with any number of threads, and with whatever compiler and flags
+built rayo. A compiler may otherwise fuse `a * b + c` into one fused multiply-add, rounded
+once instead of twice: clang does by default (`-ffp-contract=on`), and with `-mfma` or on
+ARM64 it emits FMA instructions, so a `clang -O3 -mavx2 -mfma` build and a `gcc -O2` one
+differed in the last bit of some outputs. So every build of rayo passes `-ffp-contract=off`:
+the Makefile, `tool/ci/common.sh` (tests, tools, the Android builds, the benchmarks), the Dart
+build hook (`hook/build.dart`) and rayo-convert's `Library.build`. **A program that compiles
+`src/` with its own build must pass it too** (`-ffp-contract=off` for gcc and clang; MSVC does
+not contract by default). No kernel calls an FMA intrinsic or `fma()`: the SIMD kernels
+multiply and add as separate steps, in the order the generic C does.
+
+`tool/ci/builds.sh` (in CI and `tool/check`) checks it: it builds
+[`tests/builds/outputs.c`](tests/builds/outputs.c) with `gcc -O2` and with
+`clang -O3 -mavx2 -mfma` (`clang -O3` on ARM) and compares every output of every test model
+and the Ask models, with each kernel set, bit for bit.
+
 ## C89
 
 Every C file, the tests' and tools' too, builds with gcc and clang as
-`-std=c89 -pedantic -Werror -Wall -Wextra -Wconversion -Wshadow -Wdeclaration-after-statement -Wvla`.
+`-std=c89 -pedantic -Werror -Wall -Wextra -Wconversion -Wshadow -Wdeclaration-after-statement -Wvla`
+(and `-ffp-contract=off`, [above](#same-floats-from-every-build)).
 
 - No `//`, declarations at the top of blocks, no designated initialisers or compound literals,
   no `inline`, `restrict` only as `RAYO_RESTRICT` (`__restrict__` where the compiler has it),
@@ -293,7 +317,7 @@ tool/check   # what CI runs and this computer can: lint, C tests, sanitisers, An
 ## CI
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request and push to
-`main`: lint (format, C89 with gcc and clang), the C tests on Linux x86_64 (gcc and clang;
+`main`: lint (format, C89 with gcc and clang, the same floats from a gcc and a clang build), the C tests on Linux x86_64 (gcc and clang;
 generic, SSE4.1 and AVX2 builds, each kernel set, AVX-VNNI where the runner has it), under
 ASan, LSan and UBSan, natively on Linux arm64 (NEON, and SDOT where the CPU has it), on
 armv7 under QEMU, on macOS arm64, the Android NDK builds with a size budget, and the Dart

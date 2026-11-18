@@ -108,7 +108,7 @@ class Library:
             return cls._built[key]
         out = Path(tempfile.mkdtemp(prefix="rayo-lib-")) / "librayo.so"
         srcs = sorted(str(p) for p in (root / "src").rglob("*.c"))
-        cmd = [cc or os.environ.get("CC", "cc"), "-std=c89", "-O2", "-shared", "-fPIC",
+        cmd = [cc or os.environ.get("CC", "cc"), "-std=c89", "-O2", "-ffp-contract=off", "-shared", "-fPIC",
                f"-I{root / 'include'}", f"-I{root / 'src'}",
                *(flags or []), *srcs, "-lm", "-lpthread", "-o", str(out)]
         subprocess.run(cmd, check=True)

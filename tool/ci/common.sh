@@ -1,13 +1,17 @@
 # shellcheck shell=bash
 # Sourced by tool/check and the CI jobs: the C flags rayo is built with, and
-# helpers. Everything rayo compiles is strict C89.
+# helpers. Everything rayo compiles is strict C89, with -ffp-contract=off: no
+# compiler fuses a multiply and an add into one rounding on its own (clang
+# does by default, and with -mfma emits FMA instructions), so every build
+# gives the same floats whatever its compiler and optimisation flags
+# (tool/ci/builds.sh).
 set -euo pipefail
 
 RAYO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$RAYO_ROOT"
 
 C89_FLAGS=(-std=c89 -pedantic -Werror -Wall -Wextra -Wconversion -Wshadow
-  -Wdeclaration-after-statement -Wvla)
+  -Wdeclaration-after-statement -Wvla -ffp-contract=off)
 INCLUDES=(-Iinclude -Isrc)
 
 lib_sources() { find src -name '*.c' | LC_ALL=C sort; }

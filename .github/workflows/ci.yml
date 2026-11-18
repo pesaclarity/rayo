@@ -32,6 +32,8 @@ jobs:
         run: tool/ci/lint.sh
       - name: Examples
         run: tool/ci/examples.sh gcc
+      - name: The same floats from gcc -O2 and clang -O3 -mavx2 -mfma
+        run: tool/ci/builds.sh
 
   convert:
     name: convert
@@ -109,6 +111,8 @@ jobs:
         run: tool/ci/test.sh gcc
       - name: clang
         run: tool/ci/test.sh clang
+      - name: The same floats from gcc -O2 and clang -O3
+        run: tool/ci/builds.sh
       - name: erf, every float in [0, 4]
         run: tool/ci/erf.sh gcc
       - name: ASan, LSan and UBSan

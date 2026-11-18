@@ -52,6 +52,10 @@ void main(List<String> args) async {
         '-fvisibility=hidden',
         '-ffunction-sections',
         '-fdata-sections',
+        // No fused multiply-adds the source does not ask for (clang fuses
+        // by default, and with -mfma emits FMA instructions): the same
+        // floats as every other build of rayo, whatever the target's flags.
+        '-ffp-contract=off',
         // Kernels for the target's SIMD. The dot-product kernels (AVX-VNNI,
         // ARM SDOT) are compiled with target attributes and chosen at run
         // time, so the baseline stays what every phone of the ABI runs.

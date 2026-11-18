@@ -21,6 +21,7 @@ if [ "$(uname -m)" = x86_64 ]; then
 else
   tool/ci/sanitize.sh cc
 fi
+if command -v gcc >/dev/null && command -v clang >/dev/null; then tool/ci/builds.sh; fi
 tool/ci/erf.sh cc
 tool/ci/chat.sh cc
 if [ -n "${ANDROID_NDK_HOME:-}" ]; then tool/ci/android.sh; fi
