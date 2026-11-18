@@ -12,7 +12,7 @@ out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 echo "== chat example: $cc $*"
 make -s clean
-make -s CC="$cc" CFLAGS="-O2 ${*:-}" ${LIBS:+LIBS="$LIBS"}
+make -s CC="$cc" CFLAGS="-O2 ${HARDEN_FLAGS[*]} ${*:-}" ${LIBS:+LIBS="$LIBS"}
 for args in "--temp 0" "--temp 0.8 --seed 7 --threads 2"; do
   # shellcheck disable=SC2086
   printf 'hello there\nand the cat?\n/reset\nhi\n/quit\n' |

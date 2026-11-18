@@ -13,6 +13,15 @@ cd "$RAYO_ROOT"
 C89_FLAGS=(-std=c89 -pedantic -Werror -Wall -Wextra -Wconversion -Wshadow
   -Wdeclaration-after-statement -Wvla -ffp-contract=off)
 INCLUDES=(-Iinclude -Isrc)
+# Hardening (docs/SECURITY.md), for every build but -fsyntax-only (lint.sh): a
+# canary in each function with a buffer, the C library's checked copies
+# where sizes are known (-U first: some compilers define it already), and
+# no format string that is not a literal. Shared libraries also link with
+# HARDEN_LDFLAGS: relocations read-only after loading, bound at once, and a
+# stack that cannot be executed.
+HARDEN_FLAGS=(-fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -Wformat
+  -Wformat-security)
+HARDEN_LDFLAGS=(-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
 
 lib_sources() { find src -name '*.c' | LC_ALL=C sort; }
 c_files() { find include src tests tools examples -name '*.[ch]' | LC_ALL=C sort; }
@@ -34,8 +43,8 @@ build_tests() {
     wrap+=(-DRAYO_TEST_COUNT_ALLOCS -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc)
   fi
   # shellcheck disable=SC2046
-  "$cc" "${C89_FLAGS[@]}" "${INCLUDES[@]}" -Itests "$@" $(lib_sources) tests/*.c -lm -lpthread \
-    "${wrap[@]}" -o "$out"
+  "$cc" "${C89_FLAGS[@]}" "${HARDEN_FLAGS[@]}" "${INCLUDES[@]}" -Itests "$@" $(lib_sources) \
+    tests/*.c -lm -lpthread "${wrap[@]}" -o "$out"
 }
 
 # build_tool CC SOURCE OUT [flags...]: a program (examples/*/*.c) with the
@@ -44,8 +53,8 @@ build_tool() {
   local cc=$1 src=$2 out=$3
   shift 3
   # shellcheck disable=SC2046
-  "$cc" "${C89_FLAGS[@]}" "${INCLUDES[@]}" -Itools "$@" $(lib_sources) tools/bench.c \
-    "$src" -lm -lpthread -o "$out"
+  "$cc" "${C89_FLAGS[@]}" "${HARDEN_FLAGS[@]}" "${INCLUDES[@]}" -Itools "$@" $(lib_sources) \
+    tools/bench.c "$src" -lm -lpthread -o "$out"
 }
 
 # run_tests BINARY: the whole suite with each kernel set the build has.

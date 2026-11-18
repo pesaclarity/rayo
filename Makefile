@@ -11,7 +11,10 @@
 # CFLAGS: it keeps the floats the same as every other build's.
 
 CC ?= cc
-CFLAGS ?= -O2
+# Hardened (docs/SECURITY.md); a compiler other than gcc or clang may need
+# CFLAGS=-O2 alone.
+CFLAGS ?= -O2 -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -Wformat \
+	-Wformat-security
 LIBS ?= -lm -lpthread
 RAYO_FLAGS = -std=c89 -ffp-contract=off -Iinclude -Isrc
 SOURCES = $(sort $(wildcard src/*.c src/*/*.c))
