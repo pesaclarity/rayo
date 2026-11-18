@@ -33,6 +33,14 @@ class _Message(C.Structure):
     _fields_ = [("text", C.c_char * 256)]
 
 
+class _ModelOptions(C.Structure):
+    _fields_ = [("ops", C.c_void_p), ("op_count", C.c_int), ("read_file", C.c_int)]
+
+
+class _SessionOptions(C.Structure):
+    _fields_ = [("threads", C.c_int)]
+
+
 class RayoError(RuntimeError):
     pass
 
@@ -65,6 +73,11 @@ class Library:
         L.rayo_model_output_info.argtypes = [C.c_void_p, C.c_int, C.POINTER(_View)]
         L.rayo_session_kernels.argtypes = [C.c_void_p]
         L.rayo_session_kernels.restype = C.c_char_p
+        L.rayo_model_load.argtypes = [C.c_char_p, C.POINTER(_ModelOptions), C.POINTER(C.c_void_p),
+                                      C.POINTER(_Message)]
+        L.rayo_session_create_with.argtypes = [C.c_void_p, C.POINTER(_SessionOptions),
+                                               C.POINTER(C.c_void_p), C.POINTER(_Message)]
+        L.rayo_session_threads.argtypes = [C.c_void_p]
 
     @classmethod
     def build(cls, rayo_dir: str | Path | None = None, cc: str | None = None,
@@ -79,7 +92,7 @@ class Library:
         srcs = sorted(str(p) for p in (root / "src").rglob("*.c"))
         cmd = [cc or os.environ.get("CC", "cc"), "-std=c89", "-O2", "-shared", "-fPIC",
                f"-I{root / 'include'}", f"-I{root / 'src'}",
-               *(flags or []), *srcs, "-lm", "-o", str(out)]
+               *(flags or []), *srcs, "-lm", "-lpthread", "-o", str(out)]
         subprocess.run(cmd, check=True)
         lib = cls(out)
         cls._built[key] = lib
@@ -87,12 +100,21 @@ class Library:
 
 
 class Model:
-    def __init__(self, lib: Library, data: bytes) -> None:
+    def __init__(self, lib: Library, data: bytes | None = None, path: str | Path | None = None,
+                 read_file: bool = False) -> None:
+        """A model from its bytes, or loaded (mapped) from ``path``."""
         self.lib = lib
-        self._bytes = C.create_string_buffer(data, len(data))
         self.ptr = C.c_void_p()
         msg = _Message()
-        s = lib.lib.rayo_model_create(self._bytes, len(data), C.byref(self.ptr), C.byref(msg))
+        if path is not None:
+            opts = _ModelOptions(None, 0, int(read_file))
+            s = lib.lib.rayo_model_load(str(path).encode(), C.byref(opts), C.byref(self.ptr),
+                                        C.byref(msg))
+        else:
+            assert data is not None
+            self._bytes = C.create_string_buffer(data, len(data))
+            s = lib.lib.rayo_model_create(self._bytes, len(data), C.byref(self.ptr),
+                                          C.byref(msg))
         if s != 0:
             raise RayoError(msg.text.decode())
 
@@ -106,13 +128,18 @@ class Model:
 
 
 class Session:
-    def __init__(self, model: Model) -> None:
+    def __init__(self, model: Model, threads: int = 1) -> None:
         self.model = model
         self.L = model.lib.lib
         self.ptr = C.c_void_p()
         msg = _Message()
-        if self.L.rayo_session_create(model.ptr, C.byref(self.ptr), C.byref(msg)) != 0:
+        opts = _SessionOptions(threads)
+        if self.L.rayo_session_create_with(model.ptr, C.byref(opts), C.byref(self.ptr),
+                                           C.byref(msg)) != 0:
             raise RayoError(msg.text.decode())
+
+    def threads(self) -> int:
+        return int(self.L.rayo_session_threads(self.ptr))
 
     def bind(self, name: str, value: int) -> None:
         msg = _Message()

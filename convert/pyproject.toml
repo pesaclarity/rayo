@@ -1,20 +1,21 @@
 [project]
 name = "rayo-convert"
 version = "0.1.0"
-description = "Converts TFLite (and ONNX) models to rayo models: a PCWT file with rayo's graph."
+description = "Converts TFLite, ONNX and Hugging Face language models to rayo models: a PCWT file with rayo's graph."
 license = { text = "AGPL-3.0-only" }
 requires-python = ">=3.10"
 authors = [{ name = "Pesa Clarity contributors" }]
-dependencies = [
-    "numpy>=1.24,<3",
-    # The flatbuffers code generated from TFLite's schema, so no TensorFlow.
-    "tflite==2.18.0",
-    "flatbuffers>=23.5.26",
-]
+# NumPy alone converts a Hugging Face language model (safetensors are read without the
+# safetensors package; no torch, no TensorFlow). The extras add the other sources.
+dependencies = ["numpy>=1.24,<3"]
 
 [project.optional-dependencies]
+# The model's chat template, rendered into the file for chat programs.
+chat = ["jinja2>=3.1,<4"]
+# The flatbuffers code generated from TFLite's schema, so no TensorFlow.
+tflite = ["tflite==2.18.0", "flatbuffers>=23.5.26"]
 onnx = ["onnx>=1.16,<2"]
-test = ["pytest>=8", "onnx>=1.16,<2"]
+test = ["pytest>=8", "onnx>=1.16,<2", "jinja2>=3.1,<4", "tflite==2.18.0", "flatbuffers>=23.5.26"]
 
 [project.scripts]
 rayo-convert = "rayo_convert.cli:main"

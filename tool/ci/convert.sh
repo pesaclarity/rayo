@@ -12,7 +12,7 @@ shift || true
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 py=${PYTHON:-python3}
-if ! "$py" -c "import tflite, numpy, pytest, onnx" 2>/dev/null; then
+if ! "$py" -c "import tflite, numpy, pytest, onnx, jinja2" 2>/dev/null; then
   echo "== a venv with convert/requirements-ci.txt"
   if command -v uv >/dev/null; then
     uv venv -q "$out/venv"

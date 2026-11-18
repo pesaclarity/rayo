@@ -1,6 +1,8 @@
-"""rayo-convert: a TFLite (or ONNX) model to a rayo model.
+"""rayo-convert: a TFLite (or ONNX) model, or a Hugging Face decoder-only language model, to a
+rayo model.
 
     rayo-convert model.tflite -o model.weights
+    rayo-convert SmolLM2-135M-Instruct/ -o smollm2.weights --weights q4 --context 2048
     rayo-convert reader.tflite -o reader.weights --name ask-reader \\
         --split-input question=tokens:96,shapes:96 --outputs slots,intent
     rayo-convert writer.tflite -o writer.weights --rename output_0=logits
@@ -50,7 +52,13 @@ def _split(values: list[str]) -> dict[str, list[tuple[str, int]]]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="rayo-convert", description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("model", help="a .tflite (or .onnx) file")
+    ap.add_argument("model", help="a .tflite (or .onnx) file, or a Hugging Face model's "
+                    "directory (config.json, *.safetensors, tokenizer.json)")
+    ap.add_argument("--weights", choices=["q4", "int8", "float32"], default="q4",
+                    help="a language model's weights: 4-bit groups (default), int8 or float32")
+    ap.add_argument("--context", type=int,
+                    help="a language model's longest context, in tokens (default 2048, at most "
+                         "its own); its key/value cache is planned for this")
     ap.add_argument("-o", "--output", help="the rayo model to write (default: MODEL.weights)")
     ap.add_argument("--name", help="the model's name in the file (default: the file's stem)")
     ap.add_argument("--split-input", action="append", default=[], metavar="NAME=PART:SIZE,...",
@@ -74,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-q", "--quiet", action="store_true", help="print nothing but errors")
     ap.add_argument("--version", action="version", version=f"rayo-convert {__version__}")
     a = ap.parse_args(argv)
+    if Path(a.model).is_dir():
+        return _language_model(a)
     shapes = {}
     for s in a.input_shape:
         name, _, dims = s.partition("=")
@@ -111,6 +121,28 @@ def main(argv: list[str] | None = None) -> int:
               + (f", symbols {g['symbols']}" if "symbols" in g else ""))
         if a.graph:
             print(json.dumps(g, indent=1))
+    return 0
+
+
+def _language_model(a: argparse.Namespace) -> int:
+    from . import hf
+
+    out = Path(a.output) if a.output else Path(a.model.rstrip("/") + ".weights")
+    opts = hf.HfOptions(name=a.name, weights=a.weights, context=a.context,
+                        positions="all" if a.positions == "all" else "last",
+                        metadata=json.loads(a.metadata) if a.metadata else None)
+    try:
+        size, notes = hf.convert_dir(a.model, out, opts)
+    except ConvertError as e:
+        print(f"rayo-convert: {a.model}: cannot convert: {e}", file=sys.stderr)
+        return 1
+    except FileNotFoundError as e:
+        print(f"rayo-convert: {e}", file=sys.stderr)
+        return 2
+    if not a.quiet:
+        for line in notes:
+            print(f"note: {line}")
+        print(f"wrote {out} ({size} bytes)")
     return 0
 
 
