@@ -4,6 +4,7 @@
 
 #include "rayo/config.h"
 #include "rayo/error.h"
+#include "rayo/generate.h"
 #include "rayo/model.h"
 #include "rayo/op.h"
 #include "rayo/session.h"

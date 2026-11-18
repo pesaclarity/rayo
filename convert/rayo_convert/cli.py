@@ -59,6 +59,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--context", type=int,
                     help="a language model's longest context, in tokens (default 2048, at most "
                          "its own); its key/value cache is planned for this")
+    ap.add_argument("--chunk", type=int, default=64,
+                    help="a language model's prompt tokens per run (default 64): more is a "
+                         "little faster on long prompts and plans more memory")
     ap.add_argument("-o", "--output", help="the rayo model to write (default: MODEL.weights)")
     ap.add_argument("--name", help="the model's name in the file (default: the file's stem)")
     ap.add_argument("--split-input", action="append", default=[], metavar="NAME=PART:SIZE,...",
@@ -129,7 +132,7 @@ def _language_model(a: argparse.Namespace) -> int:
 
     out = Path(a.output) if a.output else Path(a.model.rstrip("/") + ".weights")
     opts = hf.HfOptions(name=a.name, weights=a.weights, context=a.context,
-                        positions="all" if a.positions == "all" else "last",
+                        positions="all" if a.positions == "all" else "last", chunk=a.chunk,
                         metadata=json.loads(a.metadata) if a.metadata else None)
     try:
         size, notes = hf.convert_dir(a.model, out, opts)

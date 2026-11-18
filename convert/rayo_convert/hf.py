@@ -296,6 +296,7 @@ class HfOptions:
     weights: str = "q4"  # float32, int8 or q4
     context: int | None = None
     positions: str = "last"  # last or all
+    chunk: int = 64  # the most prompt tokens one run takes
     metadata: dict[str, Any] | None = None
 
 
@@ -376,6 +377,7 @@ def build(src: Path, opts: HfOptions) -> tuple[dict[str, Any], list[Planned], li
         return name
 
     hd, H, KV = dec.head_dim, dec.heads, dec.kv_heads
+    chunk = max(1, min(opts.chunk, dec.context))
     embed_name = "model.embed_tokens.weight"
     if embed_name not in st:
         raise ConvertError("no model.embed_tokens.weight: not a Llama-style decoder")
@@ -475,8 +477,10 @@ def build(src: Path, opts: HfOptions) -> tuple[dict[str, Any], list[Planned], li
     ]
     graph = {
         "version": 1,
-        "symbols": {"T": dec.context, "P": dec.context - 1},
-        "plan": {"P": 0},
+        # T new tokens a run (a prompt goes in chunks of at most `chunk`) at P earlier ones:
+        # memory is planned for a full chunk at the end of the context, the largest of both.
+        "symbols": {"T": chunk, "P": dec.context - 1},
+        "plan": {"P": dec.context - chunk, "T": chunk},
         "inputs": [{"name": "tokens", "dtype": "int32", "shape": ["T"]}],
         "states": states,
         "nodes": nodes,
@@ -485,7 +489,8 @@ def build(src: Path, opts: HfOptions) -> tuple[dict[str, Any], list[Planned], li
     meta = {
         "architecture": "decoder",
         "layers": dec.layers, "hidden": dec.hidden, "heads": H, "kv_heads": KV,
-        "head_dim": hd, "vocab": vocab, "context": dec.context, "weights": opts.weights,
+        "head_dim": hd, "vocab": vocab, "context": dec.context, "chunk": chunk,
+        "weights": opts.weights,
     }
     meta.update(generation_metadata(src))
     if opts.metadata:
