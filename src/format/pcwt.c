@@ -190,6 +190,7 @@ rayo_status rayo_pcwt_read(const rayo_u8 *file, size_t size, rayo_arena *arena, 
   const rayo_json *tensors;
   rayo_weight *weights;
   rayo_status s;
+  size_t tok_end = 0;
   memset(out, 0, sizeof *out);
   if (size < 12 || memcmp(file, magic, 4) != 0) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "not a plain-weights (PCWT) file");
@@ -228,12 +229,11 @@ rayo_status rayo_pcwt_read(const rayo_u8 *file, size_t size, rayo_arena *arena, 
       }
       out->tokenizer = file + 12 + header_len + offset;
       out->tokenizer_size = (size_t)bytes;
+      tok_end = (size_t)offset + (size_t)bytes;
     }
   }
-  s = read_tensors(
-      tensors, file + 12 + header_len, size - 12 - header_len, weights,
-      out->tokenizer ? (size_t)(out->tokenizer - file - 12 - header_len) + out->tokenizer_size : 0,
-      msg);
+  s = read_tensors(tensors, file + 12 + header_len, size - 12 - header_len, weights, tok_end,
+                   msg);
   if (s != RAYO_OK) return s;
   out->header = header;
   out->model = rayo_json_as_string(rayo_json_get(header, "model"));

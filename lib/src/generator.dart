@@ -8,11 +8,20 @@ import 'errors.dart';
 import 'model.dart';
 import 'native_text.dart';
 
-/// A model's tokeniser, read from its tokenizer.json (rayo-convert writes it
-/// next to the model as `MODEL.tokenizer.json`). Close it after the
-/// generators that use it.
+/// A model's tokeniser: the table rayo-convert writes into the model file,
+/// read in place ([RayoTokenizer.fromModel]), or its tokenizer.json. Close it
+/// after the generators that use it, and before its model.
 class RayoTokenizer {
   RayoTokenizer._(this._handle);
+
+  /// The table in [model]'s file, read where it is in the mapped file: no
+  /// JSON is parsed. Throws when the file has none (convert it again).
+  factory RayoTokenizer.fromModel(RayoModel model) => using((arena) {
+    final out = arena<Pointer<c.RayoTokenizerHandle>>();
+    final msg = arena<c.RayoMessage>();
+    check(c.rayo_tokenizer_from_model(model.handle, out, msg), msg);
+    return RayoTokenizer._(out.value);
+  });
 
   /// Reads the tokenizer.json at [path].
   factory RayoTokenizer.load(String path) => using((arena) {
@@ -57,7 +66,7 @@ class RayoTokenizer {
 ///
 /// ```dart
 /// final model = RayoModel.map('smollm2.weights');
-/// final tokenizer = RayoTokenizer.load('smollm2.tokenizer.json');
+/// final tokenizer = RayoTokenizer.fromModel(model);
 /// final g = RayoGenerator(model, tokenizer, temperature: 0.7);
 /// g.chat('Hello!');
 /// for (final piece in g.reply()) stdout.write(piece);   // stop early to cancel
@@ -70,8 +79,12 @@ class RayoTokenizer {
 /// made it.
 class RayoGenerator {
   /// A generator for [model] (a decoder converted by rayo-convert) and its
-  /// [tokenizer]. [threads]: null for the fast cores (a phone's big cores,
-  /// at most 4), else that many. Zero [temperature] decodes greedily.
+  /// [tokenizer]. [threads]: null for the default (a phone's fast cores, at
+  /// most 2 on Android and 4 elsewhere), else that many. Zero [temperature]
+  /// decodes greedily. [context]: the tokens the conversation holds, null
+  /// for 1024 (at most the model's); the key/value cache is sized for it.
+  /// [chunk]: prompt tokens a run, null for 32. [int8Cache]: the key/value
+  /// cache in int8, a quarter of float32's memory.
   factory RayoGenerator(
     RayoModel model,
     RayoTokenizer tokenizer, {
@@ -83,6 +96,9 @@ class RayoGenerator {
     int seed = 1,
     int? threads,
     int maxTokens = 256,
+    int? context,
+    int? chunk,
+    bool int8Cache = true,
   }) => using((arena) {
     final o = arena<c.RayoGeneratorOptions>();
     o.ref.sampling.temperature = temperature;
@@ -91,9 +107,11 @@ class RayoGenerator {
     o.ref.sampling.minP = minP;
     o.ref.sampling.repetitionPenalty = repetitionPenalty;
     o.ref.sampling.seed = seed;
-    final fast = c.rayo_cpu_fast_cores();
-    o.ref.threads = threads ?? (fast > 4 ? 4 : fast);
+    o.ref.threads = threads ?? c.rayo_cpu_default_threads();
     o.ref.maxTokens = maxTokens;
+    o.ref.context = context ?? 0;
+    o.ref.chunk = chunk ?? 0;
+    o.ref.cache = int8Cache ? c.rayoCacheInt8 : c.rayoCacheFloat32;
     final out = arena<Pointer<c.RayoGeneratorHandle>>();
     final msg = arena<c.RayoMessage>();
     check(

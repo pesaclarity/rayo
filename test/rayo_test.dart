@@ -187,4 +187,31 @@ void main() {
     tokenizer.close();
     model.close();
   });
+
+  test('a lean language model: its table, an int8 cache, a short context', () {
+    final model = RayoModel.map('tests/models/llama-q3.weights');
+    final tokenizer = RayoTokenizer.fromModel(model);
+    final g = RayoGenerator(
+      model,
+      tokenizer,
+      temperature: 0,
+      maxTokens: 4,
+      context: 64,
+      chunk: 8,
+    );
+    expect(g.context, 64);
+    g.chat('hello there');
+    expect(g.reply().join(), isNotEmpty);
+    final old = RayoModel.map('tests/models/llama-q4.weights');
+    expect(() => RayoTokenizer.fromModel(old), throwsA(isA<RayoException>()));
+    final memory = RayoProcessMemory.now();
+    if (memory != null) {
+      expect(memory.privateBytes, greaterThan(0));
+      expect(memory.residentBytes, greaterThanOrEqualTo(memory.privateBytes));
+    }
+    g.close();
+    tokenizer.close();
+    old.close();
+    model.close();
+  });
 }

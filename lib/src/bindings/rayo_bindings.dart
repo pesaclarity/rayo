@@ -50,6 +50,9 @@ final class RayoMemoryInfo extends Struct {
 
   @Size()
   external int overhead;
+
+  @Size()
+  external int states;
 }
 
 /// `rayo_dtype`.
@@ -213,6 +216,9 @@ final class RayoModelOptions extends Struct {
 
   @Int()
   external int readFile;
+
+  @Int()
+  external int access;
 }
 
 /// `rayo_sampler_options`.
@@ -245,7 +251,54 @@ final class RayoGeneratorOptions extends Struct {
 
   @Int32()
   external int maxTokens;
+
+  @Int32()
+  external int context;
+
+  @Int32()
+  external int chunk;
+
+  @Int()
+  external int cache;
 }
+
+/// `rayo_cache_type`.
+const rayoCacheFloat32 = 0;
+const rayoCacheInt8 = 1;
+
+/// `rayo_process_memory_info`.
+final class RayoProcessMemoryInfo extends Struct {
+  @Size()
+  external int privateBytes;
+
+  @Size()
+  external int fileBytes;
+
+  @Size()
+  external int residentBytes;
+
+  @Size()
+  external int peakResidentBytes;
+}
+
+@Native<Int32 Function(Pointer<RayoProcessMemoryInfo>)>()
+external int rayo_process_memory(Pointer<RayoProcessMemoryInfo> out);
+
+@Native<Int Function()>(isLeaf: true)
+external int rayo_cpu_default_threads();
+
+@Native<
+  Int32 Function(
+    Pointer<RayoModelHandle>,
+    Pointer<Pointer<RayoTokenizerHandle>>,
+    Pointer<RayoMessage>,
+  )
+>()
+external int rayo_tokenizer_from_model(
+  Pointer<RayoModelHandle> model,
+  Pointer<Pointer<RayoTokenizerHandle>> out,
+  Pointer<RayoMessage> msg,
+);
 
 @Native<
   Int32 Function(

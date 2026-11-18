@@ -20,6 +20,13 @@
 #else
 #define RAYO_AVX2 __attribute__((target("avx2,fma")))
 #endif
+/* Inlined into each kernel, so each has its own copy for its group size
+ * and scale type, with no test in the inner loop. */
+#if defined(__GNUC__) || defined(__clang__)
+#define RAYO_INLINE __inline__ __attribute__((always_inline))
+#else
+#define RAYO_INLINE
+#endif
 #if defined(__SSE4_1__) || !(defined(__GNUC__) || defined(__clang__))
 #define RAYO_SSE41
 #else
@@ -98,7 +105,7 @@ RAYO_AVX2 void rayo_gemm_i8_avx2(const rayo_i8 *RAYO_RESTRICT a, size_t lda, siz
  * (pmaddubsw, at most 2 * 127 * 8 per pair, no saturation), pairs added
  * into int32 lanes of four products (pmaddwd), then scaled in float and
  * added into eight lanes, as the generic kernel does. */
-RAYO_AVX2 static __m256i unpack_q4_avx2(const rayo_u8 *g) {
+RAYO_AVX2 static RAYO_INLINE __m256i unpack_q4_avx2(const rayo_u8 *g) {
   const __m128i low = _mm_set1_epi8(15);
   const __m128i b = _mm_loadu_si128((const __m128i *)(const void *)g);
   const __m128i lo = _mm_and_si128(b, low), hi = _mm_and_si128(_mm_srli_epi16(b, 4), low);
@@ -106,7 +113,7 @@ RAYO_AVX2 static __m256i unpack_q4_avx2(const rayo_u8 *g) {
                          _mm256_set1_epi8(8));
 }
 
-RAYO_AVX2 static __m256i unpack_q3_avx2(const rayo_u8 *g) {
+RAYO_AVX2 static RAYO_INLINE __m256i unpack_q3_avx2(const rayo_u8 *g) {
   const __m256i bit = _mm256_set_epi8(-128, 64, 32, 16, 8, 4, 2, 1, -128, 64, 32, 16, 8, 4, 2, 1,
                                       -128, 64, 32, 16, 8, 4, 2, 1, -128, 64, 32, 16, 8, 4, 2, 1);
   const __m256i spread = _mm256_set_epi8(3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1,
@@ -121,16 +128,16 @@ RAYO_AVX2 static __m256i unpack_q3_avx2(const rayo_u8 *g) {
   return _mm256_sub_epi8(_mm256_or_si256(low, high), _mm256_set1_epi8(4));
 }
 
-RAYO_AVX2 static __m256 scaled_avx2(__m256 acc, __m256i av, __m256i wv, float d) {
+RAYO_AVX2 static RAYO_INLINE __m256 scaled_avx2(__m256 acc, __m256i av, __m256i wv, float d) {
   const __m256i p =
       _mm256_madd_epi16(_mm256_maddubs_epi16(_mm256_sign_epi8(av, av), _mm256_sign_epi8(wv, av)),
                         _mm256_set1_epi16(1));
   return _mm256_add_ps(acc, _mm256_mul_ps(_mm256_cvtepi32_ps(p), _mm256_set1_ps(d)));
 }
 
-RAYO_AVX2 static float dot_q_avx2(const rayo_i8 *a, const float *as, const rayo_u8 *w,
-                                  const void *ws, rayo_bool half, size_t first, size_t groups,
-                                  size_t bytes) {
+RAYO_AVX2 static RAYO_INLINE float dot_q_avx2(const rayo_i8 *a, const float *as, const rayo_u8 *w,
+                                              const void *ws, rayo_bool half, size_t first,
+                                              size_t groups, size_t bytes) {
   __m256 acc = _mm256_setzero_ps();
   float lanes[8];
   size_t g;
@@ -146,9 +153,10 @@ RAYO_AVX2 static float dot_q_avx2(const rayo_i8 *a, const float *as, const rayo_
 
 /* Two rows of activations by one of weights, each weight group unpacked
  * once: the prompt's product. Each row's sums are exactly dot_q_avx2's. */
-RAYO_AVX2 static void dot2_q_avx2(const rayo_i8 *a0, const rayo_i8 *a1, const float *s0,
-                                  const float *s1, const rayo_u8 *w, const void *ws, rayo_bool half,
-                                  size_t first, size_t groups, size_t bytes, float *r0, float *r1) {
+RAYO_AVX2 static RAYO_INLINE void dot2_q_avx2(const rayo_i8 *a0, const rayo_i8 *a1, const float *s0,
+                                              const float *s1, const rayo_u8 *w, const void *ws,
+                                              rayo_bool half, size_t first, size_t groups,
+                                              size_t bytes, float *r0, float *r1) {
   __m256 acc0 = _mm256_setzero_ps(), acc1 = acc0;
   float lanes[8];
   size_t g;
@@ -167,10 +175,11 @@ RAYO_AVX2 static void dot2_q_avx2(const rayo_i8 *a0, const rayo_i8 *a1, const fl
   *r1 = rayo_q4_lanes_sum(lanes);
 }
 
-RAYO_AVX2 static void gemm_q_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale,
-                                  size_t m, const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
-                                  rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
-                                  size_t ldc, size_t bytes) {
+RAYO_AVX2 static RAYO_INLINE void gemm_q_avx2(const rayo_i8 *RAYO_RESTRICT a,
+                                              const float *RAYO_RESTRICT ascale, size_t m,
+                                              const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
+                                              rayo_bool half, size_t n, size_t k,
+                                              float *RAYO_RESTRICT c, size_t ldc, size_t bytes) {
   const size_t groups = k / RAYO_Q4_GROUP;
   size_t i, j;
   for (j = 0; j < n; j++) {
@@ -190,14 +199,22 @@ RAYO_AVX2 void rayo_gemm_q4_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RA
                                  size_t m, const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                  rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
                                  size_t ldc) {
-  gemm_q_avx2(a, ascale, m, w, wscale, half, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  if (half) {
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  } else {
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  }
 }
 
 RAYO_AVX2 void rayo_gemm_q3_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale,
                                  size_t m, const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                  rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
                                  size_t ldc) {
-  gemm_q_avx2(a, ascale, m, w, wscale, half, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  if (half) {
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  } else {
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  }
 }
 #endif
 
@@ -243,14 +260,14 @@ RAYO_SSE41 void rayo_gemm_i8_sse41(const rayo_i8 *RAYO_RESTRICT a, size_t lda, s
 }
 
 /* Group-wise weights, as the AVX2 kernel, in two halves of 16. */
-RAYO_SSE41 static void unpack_q4_sse41(const rayo_u8 *g, __m128i *wl, __m128i *wh) {
+RAYO_SSE41 static RAYO_INLINE void unpack_q4_sse41(const rayo_u8 *g, __m128i *wl, __m128i *wh) {
   const __m128i low = _mm_set1_epi8(15), eight = _mm_set1_epi8(8);
   const __m128i b = _mm_loadu_si128((const __m128i *)(const void *)g);
   *wl = _mm_sub_epi8(_mm_and_si128(b, low), eight);
   *wh = _mm_sub_epi8(_mm_and_si128(_mm_srli_epi16(b, 4), low), eight);
 }
 
-RAYO_SSE41 static void unpack_q3_sse41(const rayo_u8 *g, __m128i *wl, __m128i *wh) {
+RAYO_SSE41 static RAYO_INLINE void unpack_q3_sse41(const rayo_u8 *g, __m128i *wl, __m128i *wh) {
   const __m128i bit = _mm_set_epi8(-128, 64, 32, 16, 8, 4, 2, 1, -128, 64, 32, 16, 8, 4, 2, 1);
   const __m128i three = _mm_set1_epi8(3), four = _mm_set1_epi8(4);
   const rayo_u32 word =
@@ -267,9 +284,9 @@ RAYO_SSE41 static void unpack_q3_sse41(const rayo_u8 *g, __m128i *wl, __m128i *w
   *wh = _mm_sub_epi8(_mm_or_si128(*wh, hh), four);
 }
 
-RAYO_SSE41 static float dot_q_sse41(const rayo_i8 *a, const float *as, const rayo_u8 *w,
-                                    const void *ws, rayo_bool half, size_t first, size_t groups,
-                                    size_t bytes) {
+RAYO_SSE41 static RAYO_INLINE float dot_q_sse41(const rayo_i8 *a, const float *as, const rayo_u8 *w,
+                                                const void *ws, rayo_bool half, size_t first,
+                                                size_t groups, size_t bytes) {
   const __m128i ones = _mm_set1_epi16(1);
   __m128 acc0 = _mm_setzero_ps(), acc1 = acc0;
   float lanes[8];
@@ -296,11 +313,11 @@ RAYO_SSE41 static float dot_q_sse41(const rayo_i8 *a, const float *as, const ray
   return rayo_q4_lanes_sum(lanes);
 }
 
-RAYO_SSE41 static void gemm_q_sse41(const rayo_i8 *RAYO_RESTRICT a,
-                                    const float *RAYO_RESTRICT ascale, size_t m,
-                                    const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
-                                    rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
-                                    size_t ldc, size_t bytes) {
+RAYO_SSE41 static RAYO_INLINE void gemm_q_sse41(const rayo_i8 *RAYO_RESTRICT a,
+                                                const float *RAYO_RESTRICT ascale, size_t m,
+                                                const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
+                                                rayo_bool half, size_t n, size_t k,
+                                                float *RAYO_RESTRICT c, size_t ldc, size_t bytes) {
   const size_t groups = k / RAYO_Q4_GROUP;
   size_t i, j;
   for (j = 0; j < n; j++) {
@@ -317,7 +334,11 @@ RAYO_SSE41 void rayo_gemm_q4_sse41(const rayo_i8 *RAYO_RESTRICT a,
                                    const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                    rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
                                    size_t ldc) {
-  gemm_q_sse41(a, ascale, m, w, wscale, half, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  if (half) {
+    gemm_q_sse41(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  } else {
+    gemm_q_sse41(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  }
 }
 
 RAYO_SSE41 void rayo_gemm_q3_sse41(const rayo_i8 *RAYO_RESTRICT a,
@@ -325,7 +346,11 @@ RAYO_SSE41 void rayo_gemm_q3_sse41(const rayo_i8 *RAYO_RESTRICT a,
                                    const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                    rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
                                    size_t ldc) {
-  gemm_q_sse41(a, ascale, m, w, wscale, half, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  if (half) {
+    gemm_q_sse41(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  } else {
+    gemm_q_sse41(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  }
 }
 
 #else

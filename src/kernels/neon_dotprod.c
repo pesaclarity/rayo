@@ -75,8 +75,9 @@ RAYO_DOTPROD void rayo_gemm_i8_neon_dotprod(const rayo_i8 *RAYO_RESTRICT a, size
 
 /* Group-wise weights as neon.c's kernel (and its unpacking), with SDOT
  * for the lanes of four. */
-RAYO_DOTPROD static float dot_q(const rayo_i8 *a, const float *as, const rayo_u8 *w, const void *ws,
-                                rayo_bool half, size_t first, size_t groups, size_t bytes) {
+RAYO_DOTPROD static RAYO_NEON_INLINE float dot_q(const rayo_i8 *a, const float *as,
+                                                 const rayo_u8 *w, const void *ws, rayo_bool half,
+                                                 size_t first, size_t groups, size_t bytes) {
   const int32x4_t zero = vdupq_n_s32(0);
   float32x4_t acc0 = vdupq_n_f32(0.0f), acc1 = acc0;
   float lanes[8];
@@ -101,10 +102,11 @@ RAYO_DOTPROD static float dot_q(const rayo_i8 *a, const float *as, const rayo_u8
   return rayo_q4_lanes_sum(lanes);
 }
 
-RAYO_DOTPROD static void gemm_q(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale,
-                                size_t m, const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
-                                rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
-                                size_t ldc, size_t bytes) {
+RAYO_DOTPROD static RAYO_NEON_INLINE void gemm_q(const rayo_i8 *RAYO_RESTRICT a,
+                                                 const float *RAYO_RESTRICT ascale, size_t m,
+                                                 const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
+                                                 rayo_bool half, size_t n, size_t k,
+                                                 float *RAYO_RESTRICT c, size_t ldc, size_t bytes) {
   const size_t groups = k / RAYO_Q4_GROUP;
   size_t i, j;
   for (j = 0; j < n; j++) {
@@ -121,7 +123,11 @@ RAYO_DOTPROD void rayo_gemm_q4_neon_dotprod(const rayo_i8 *RAYO_RESTRICT a,
                                             const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                             rayo_bool half, size_t n, size_t k,
                                             float *RAYO_RESTRICT c, size_t ldc) {
-  gemm_q(a, ascale, m, w, wscale, half, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  if (half) {
+    gemm_q(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  } else {
+    gemm_q(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  }
 }
 
 RAYO_DOTPROD void rayo_gemm_q3_neon_dotprod(const rayo_i8 *RAYO_RESTRICT a,
@@ -129,7 +135,11 @@ RAYO_DOTPROD void rayo_gemm_q3_neon_dotprod(const rayo_i8 *RAYO_RESTRICT a,
                                             const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                             rayo_bool half, size_t n, size_t k,
                                             float *RAYO_RESTRICT c, size_t ldc) {
-  gemm_q(a, ascale, m, w, wscale, half, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  if (half) {
+    gemm_q(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  } else {
+    gemm_q(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  }
 }
 
 rayo_bool rayo_cpu_has_dotprod(void) {

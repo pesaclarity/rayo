@@ -70,8 +70,9 @@ static int32x4_t dot4(int8x16_t x, int8x16_t y) {
  * 3 bits: the two-bit planes with the third bits from their bytes, minus
  * 4), products in lanes of four, scaled in float and added into eight
  * lanes, as the generic kernel does (the unpacking: neon_unpack.h). */
-static float dot_q(const rayo_i8 *a, const float *as, const rayo_u8 *w, const void *ws,
-                   rayo_bool half, size_t first, size_t groups, size_t bytes) {
+static RAYO_NEON_INLINE float dot_q(const rayo_i8 *a, const float *as, const rayo_u8 *w,
+                                    const void *ws, rayo_bool half, size_t first, size_t groups,
+                                    size_t bytes) {
   float32x4_t acc0 = vdupq_n_f32(0.0f), acc1 = acc0;
   float lanes[8];
   size_t g;
@@ -92,9 +93,11 @@ static float dot_q(const rayo_i8 *a, const float *as, const rayo_u8 *w, const vo
   return rayo_q4_lanes_sum(lanes);
 }
 
-static void gemm_q(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale, size_t m,
-                   const rayo_u8 *RAYO_RESTRICT w, const void *wscale, rayo_bool half, size_t n,
-                   size_t k, float *RAYO_RESTRICT c, size_t ldc, size_t bytes) {
+static RAYO_NEON_INLINE void gemm_q(const rayo_i8 *RAYO_RESTRICT a,
+                                    const float *RAYO_RESTRICT ascale, size_t m,
+                                    const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
+                                    rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
+                                    size_t ldc, size_t bytes) {
   const size_t groups = k / RAYO_Q4_GROUP;
   size_t i, j;
   for (j = 0; j < n; j++) {
@@ -109,13 +112,21 @@ static void gemm_q(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT as
 void rayo_gemm_q4_neon(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale, size_t m,
                        const rayo_u8 *RAYO_RESTRICT w, const void *wscale, rayo_bool half, size_t n,
                        size_t k, float *RAYO_RESTRICT c, size_t ldc) {
-  gemm_q(a, ascale, m, w, wscale, half, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  if (half) {
+    gemm_q(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  } else {
+    gemm_q(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+  }
 }
 
 void rayo_gemm_q3_neon(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale, size_t m,
                        const rayo_u8 *RAYO_RESTRICT w, const void *wscale, rayo_bool half, size_t n,
                        size_t k, float *RAYO_RESTRICT c, size_t ldc) {
-  gemm_q(a, ascale, m, w, wscale, half, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  if (half) {
+    gemm_q(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  } else {
+    gemm_q(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+  }
 }
 #else
 typedef int rayo_neon_unused;
