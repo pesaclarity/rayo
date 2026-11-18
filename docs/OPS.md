@@ -33,8 +33,8 @@ dimension of 1 repeating. Each value is one float32 operation, as TFLite's float
 
 `neg`, `abs`, `square`, `sqrt`, `rsqrt` (`1 / sqrt(x)`), `exp`, `log`, `tanh`, `sigmoid`
 (`1 / (1 + exp(-x))`), `relu`, `relu6` (`min(max(x, 0), 6)`), `gelu_erf`
-(`0.5 x (1 + erf(x / sqrt 2))`) and `gelu_tanh` (`0.5 x (1 + tanh(sqrt(2 / pi) (x + 0.044715
-x³)))`).
+(`0.5 x (1 + erf(x / sqrt 2))`), `gelu_tanh` (`0.5 x (1 + tanh(sqrt(2 / pi) (x + 0.044715
+x³)))`) and `silu` (`x / (1 + exp(-x))`, also called swish).
 
 | | |
 | --- | --- |
@@ -42,7 +42,17 @@ x³)))`).
 | Output | x's shape, the function of each value |
 
 `exp`, `sqrt`, `rsqrt` and `gelu_erf` are rayo's float maths (`src/core/mathx.c`); `log`,
-`tanh`, `sigmoid` and `gelu_tanh` are C89's double functions rounded to float.
+`tanh`, `sigmoid`, `gelu_tanh` and `silu` are C89's double functions rounded to float.
+
+### `swiglu`
+
+| | |
+| --- | --- |
+| Inputs | gate, up: float32 activations of one shape |
+| Output | their shape: `silu(gate) * up` |
+
+The gated feed-forward layer of Llama-style models, in one pass. A model whose gate takes
+another activation uses that unary op and `mul`.
 
 ### `compare`
 
@@ -68,10 +78,12 @@ The comparison is made in double. A padding mask over token ids, where id 0 is p
 
 | | |
 | --- | --- |
-| Inputs | table: a weight `[rows, width]`, float32, or int8 with one scale. ids: int32 `[n]` |
+| Inputs | table: a weight `[rows, width]`: float32; int8 with one scale or one per row; or int4 (groups along the row). ids: int32 `[n]` |
 | Output | float32 `[n, width]`: row `ids[i]` of the table for each i |
 
-An int8 table is dequantised as each row is read (`q * scale`). An id outside the table fails
+An int8 or int4 table is dequantised as each row is read (`q * scale`), so a language
+model's embedding can be the same 4-bit tensor as its output layer (a tied embedding: the
+graph names one weight in both nodes, and the file holds it once). An id outside the table fails
 the run with `RAYO_ERR_SHAPE`.
 
 ### `concat`
@@ -149,7 +161,7 @@ These take float32 or int32 and copy; none computes.
 
 ## Linear layers
 
-`dense` and `conv1d` take float32 or int8 kernels.
+`dense` takes float32, int8 or int4 kernels; `conv1d` float32 or int8.
 
 **Float32 kernels:** the product is plain float32.
 
@@ -166,8 +178,27 @@ numbers:
 3. **Dequantise.** `y = bias + (acc - zero_point * rowsum(kernel)) * input_scale *
    kernel_scale`, then the activation.
 
-`activation` is `none` (the default), `relu`, or `gelu_erf` (`0.5 x (1 + erf(x / sqrt 2))`,
-Keras' `gelu`). It is fused into the layer.
+**int4 kernels** (weight-only, group-wise; the layout is in [FORMAT.md](FORMAT.md)) run as
+language-model runtimes run 4-bit weights:
+
+1. **Quantise the input.** Each row of the input is quantised to int8, symmetrically, one
+   scale per group of 32: `scale = max |x| / 127`, `q = x * 127 / max |x|`, rounded half away
+   from zero.
+2. **Multiply.** Per group, the products of the int8 inputs and the 4-bit weights (-8 to 7)
+   are summed exactly in int32, four at a time; each sum of four is converted to float,
+   multiplied by `input_scale * weight_scale` and added into one of eight lanes.
+3. **Add up** the lanes as `((l0 + l1) + (l2 + l3)) + ((l4 + l5) + (l6 + l7))`, then the bias
+   and the activation.
+
+Every kernel (generic C, SSE4.1, AVX2, NEON, SDOT) gives the same floats, bit for bit; the
+tests check it. The weights are read where they are in the file (mapped), with no copy.
+
+`activation` is `none` (the default), `relu`, `gelu_erf` (`0.5 x (1 + erf(x / sqrt 2))`,
+Keras' `gelu`) or `silu`. It is fused into the layer.
+
+**Threads.** A session with threads (`rayo_session_create_with`) splits a dense layer's
+outputs between them, and attention's heads. Every output is still one thread's sum in the
+same order, so the results are the same with any number of threads.
 
 ### `dense`
 
@@ -205,6 +236,17 @@ A float32 product of activations, such as attention's scores when a model is con
 op; the dimensions before the last two broadcast. Each sum is in float32, in order. For a
 layer with weights use `dense`, which takes int8.
 
+### `rms_norm`
+
+| | |
+| --- | --- |
+| Inputs | x `[..., C]`; gamma: a float32 weight `[C]` |
+| Attributes | `epsilon` (default 1e-6). `gamma_offset`: added to gamma (default 0; 1 for models that store gamma - 1) |
+| Output | x's shape: `(gamma + gamma_offset) * (x * rsqrt(mean(x²) + epsilon))` over the innermost dimension |
+
+The mean of the squares is summed in double; the rest is float32, in the order shown, as the
+transformers library computes Llama's `RMSNorm`.
+
 ### `layer_norm`
 
 | | |
@@ -237,16 +279,35 @@ then `m = rsqrt(var + eps) * gamma`, then `x * m + (beta - mean * m)`.
 It writes x into rows `at .. at + T - 1` of the state. It is how a decoder keeps each
 layer's keys and values across runs. `at + T` must be at most N.
 
+### `rope`
+
+| | |
+| --- | --- |
+| Inputs | x `[T, heads * H]`; positions: int32 `[T]` (a `range` from `P`); freq: an optional float32 weight `[R / 2]` |
+| Attributes | `heads` (required). `rotary_dims` R (default H: the whole head; less for partial rotary embeddings). `style`: `half` (default) or `interleaved`. `theta` (default 10000), used when there is no freq. `attention_scaling` (default 1): multiplies cos and sin |
+| Output | x's shape, each head's first R dimensions rotated |
+
+- **The angle** of position p and pair i is `p * freq[i]`, a float32 product, as the models
+  compute it; cos and sin are C89's, in double, rounded to float. Without the freq weight,
+  `freq[i] = theta^(-2i / R)`.
+- **`half`** (GPT-NeoX, Llama, Qwen: "rotate half") pairs dimension i with i + R/2:
+  `y[i] = x[i] cos - x[i + R/2] sin`, `y[i + R/2] = x[i + R/2] cos + x[i] sin`.
+  **`interleaved`** (GPT-J) pairs 2i with 2i + 1.
+- **Scaling** (linear, Llama 3's, and the like) is in the freq weight, which a converter
+  writes from the model's configuration, so rayo needs no code per scheme.
+
 ### `attention`
 
 | | |
 | --- | --- |
-| Inputs | q `[T, D]`; k, v `[S, D]` with S ≥ T |
-| Attributes | `heads` (default 1; D must divide by it). `causal`: 0 or 1. `scale`: default `1 / sqrt(D / heads)` |
-| Output | `[T, D]` |
+| Inputs | q `[T, heads * H]`; k, v `[S, kv_heads * H]` with S ≥ T |
+| Attributes | `heads` (default 1). `kv_heads` (default `heads`; heads must be a multiple of it). `causal`: 0 or 1. `scale`: default `1 / sqrt(H)` |
+| Output | `[T, heads * H]` |
 
-- **Per head:** `softmax(q · kᵀ * scale) · v`. Each head uses its own D / heads of the
-  dimensions.
+- **Per head:** `softmax(q · kᵀ * scale) · v`. Each head uses its own H of the dimensions.
+- **Grouped-query attention:** with `kv_heads` below `heads`, query head h reads key and value
+  head `h / (heads / kv_heads)`, as the models repeat them (Llama 2 70B, Llama 3, Qwen,
+  SmolLM). The cache then holds only the `kv_heads`.
 - **Query positions:** the T queries are at positions `S - T .. S - 1`, so the earlier keys
   can come from a cache.
 - **`causal`:** a query sees only the keys at or before its own position. A key it may not
