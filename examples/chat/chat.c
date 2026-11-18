@@ -11,7 +11,10 @@
  *
  * C89 with rayo's public API only. The clock and the memory peak use POSIX
  * (or Win32) where there is one. */
-#if defined(__unix__) || defined(__APPLE__)
+#if defined(__APPLE__)
+#define CHAT_POSIX 1
+#define _DARWIN_C_SOURCE 1 /* ru_maxrss: Darwin hides it under strict POSIX */
+#elif defined(__unix__)
 #define CHAT_POSIX 1
 #define _POSIX_C_SOURCE 200112L
 #elif defined(_WIN32)
