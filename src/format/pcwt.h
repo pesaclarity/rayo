@@ -13,19 +13,25 @@
 
 #define RAYO_PCWT_VERSION 1
 
+/* The one group size int4 weights may have (the kernels' RAYO_Q4_GROUP). */
+#define RAYO_PCWT_INT4_GROUP 32
+
 /* One tensor of the file. An int8 tensor's real values are
  * `scales[c] * (value - zero_point)`, `c` its index along `axis` (-1: one
- * scale for the whole tensor). */
+ * scale for the whole tensor). An int4 tensor holds two values a byte in
+ * groups of `group_size` along its innermost dimension (docs/FORMAT.md):
+ * its real values are `scales[group] * (value - 8)`. */
 typedef struct rayo_weight {
   const char *name;
-  rayo_dtype dtype; /* RAYO_DTYPE_F32 or RAYO_DTYPE_I8 */
+  rayo_dtype dtype; /* RAYO_DTYPE_F32, RAYO_DTYPE_I8 or RAYO_DTYPE_I4 */
   rayo_shape shape;
   size_t count; /* elements; with their bytes below 2^31 */
   const void *data;
-  const float *scales; /* int8 only */
+  const float *scales; /* int8 and int4 */
   size_t scale_count;
   rayo_i32 zero_point;
   rayo_i32 axis;
+  rayo_i32 group_size; /* int4 only */
 } rayo_weight;
 
 typedef struct rayo_pcwt {

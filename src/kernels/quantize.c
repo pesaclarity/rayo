@@ -103,3 +103,36 @@ void rayo_offset_rows(rayo_i8 *RAYO_RESTRICT q, size_t ldq, size_t rows, size_t 
     zero[r] += offset;
   }
 }
+
+void rayo_quantize_groups(const float *RAYO_RESTRICT x, size_t rows, size_t k,
+                          rayo_i8 *RAYO_RESTRICT q, float *RAYO_RESTRICT scale) {
+  const size_t groups = k / RAYO_Q4_GROUP;
+  size_t r, g, e;
+  for (r = 0; r < rows; r++) {
+    for (g = 0; g < groups; g++) {
+      const float *xg = x + r * k + g * RAYO_Q4_GROUP;
+      rayo_i8 *qg = q + r * k + g * RAYO_Q4_GROUP;
+      float top = 0.0f, inv;
+      for (e = 0; e < RAYO_Q4_GROUP; e++) {
+        const float v = xg[e] < 0.0f ? -xg[e] : xg[e];
+        top = v > top ? v : top;
+      }
+      if (top == 0.0f || !(top <= 3.0e38f)) {
+        for (e = 0; e < RAYO_Q4_GROUP; e++) qg[e] = 0;
+        scale[r * groups + g] = 0.0f;
+        continue;
+      }
+      inv = 127.0f / top;
+      for (e = 0; e < RAYO_Q4_GROUP; e++) {
+        float v = xg[e] * inv;
+        rayo_i32 iv;
+        /* Written so that a NaN clamps too. */
+        v = v >= -127.0f ? v : -127.0f;
+        v = v <= 127.0f ? v : 127.0f;
+        iv = round_half_away(v);
+        qg[e] = (rayo_i8)iv;
+      }
+      scale[r * groups + g] = top / 127.0f;
+    }
+  }
+}

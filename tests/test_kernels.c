@@ -84,6 +84,48 @@ static void check_i8(rayo_gemm_i8_fn *fn, rayo_i32 a_offset, const char *name) {
   free(got);
 }
 
+/* A Q4 product against double maths on the dequantised values, and the
+ * kernel against the generic one, bit for bit. */
+static void check_q4(rayo_gemm_q4_fn *fn, const char *name) {
+  enum { M = 3, N = 7, K = 96, G = K / RAYO_Q4_GROUP };
+  float x[M * K], ascale[M * G], wscale[N * G], want[M * N], got[M * N];
+  rayo_i8 q[M * K];
+  rayo_u8 w[N * K / 2];
+  int same = 1, close = 1;
+  size_t i, j, p;
+  for (i = 0; i < M * K; i++) x[i] = uniform();
+  x[5] = 0.0f;
+  for (i = 0; i < N * K / 2; i++) w[i] = (rayo_u8)(next() % 256u);
+  for (i = 0; i < N * G; i++) wscale[i] = 0.01f + 0.1f * (uniform() + 1.0f);
+  rayo_quantize_groups(x, M, K, q, ascale);
+  rayo_gemm_q4_generic(q, ascale, M, w, wscale, N, K, want, N);
+  fn(q, ascale, M, w, wscale, N, K, got, N);
+  for (i = 0; i < M; i++) {
+    for (j = 0; j < N; j++) {
+      double ref = 0.0;
+      for (p = 0; p < K; p++) {
+        const rayo_u8 b = w[j * K / 2 + p / 32 * 16 + p % 16];
+        const int v = (p % 32 < 16 ? b & 15 : b >> 4) - 8;
+        ref += (double)q[i * K + p] * ascale[i * G + p / 32] * v * wscale[j * G + p / 32];
+      }
+      close &= fabs(ref - want[i * N + j]) < 1e-4;
+#if defined(__arm__)
+      /* armv7 NEON flushes denormals: allow the last bits. */
+      same &= fabs(got[i * N + j] - want[i * N + j]) <= 1e-6 * (1.0 + fabs(want[i * N + j]));
+#else
+      same &= got[i * N + j] == want[i * N + j];
+#endif
+    }
+  }
+  /* The quantised activations are within half a step of x. */
+  for (i = 0; i < M * K; i++)
+    close &= fabs(q[i] * ascale[i / 32] - x[i]) <= ascale[i / 32] * 0.5001;
+  EXPECT(ascale[0] > 0.0f);
+  printf("  q4 kernel %s: %s\n", name, same ? "same as generic" : "DIFFERS from generic");
+  EXPECT(close);
+  EXPECT(same);
+}
+
 void test_kernels(void) {
   rayo_kernels best, simd;
   float a[3 * 20], w[4 * 20], c[12];
@@ -94,6 +136,8 @@ void test_kernels(void) {
   printf("  kernels: build %s, best here %s\n", simd.name, best.name);
   check_i8(simd.gemm_i8, simd.a_offset, simd.name);
   check_i8(best.gemm_i8, best.a_offset, best.name);
+  check_q4(simd.gemm_q4, simd.name);
+  check_q4(best.gemm_q4, best.name);
 #if defined(RAYO_KERNELS_X86_VNNI)
   if (!rayo_cpu_has_avxvnni()) printf("  avx-vnni: this CPU has none, not run\n");
 #endif

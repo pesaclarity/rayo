@@ -69,11 +69,39 @@ static rayo_status read_quantization(const rayo_json *q, const rayo_u8 *data, si
   return RAYO_OK;
 }
 
+/* int4: "quantization" is {"group_size": 32, "zero_point": 8, "scales_offset",
+ * "scales_bytes"}, a float32 scale per group of the innermost dimension. */
+static rayo_status read_groups(const rayo_json *q, const rayo_u8 *data, size_t data_size,
+                               rayo_weight *w, size_t *end, rayo_message *msg) {
+  rayo_i32 group, zero, s_offset, s_bytes, inner;
+  if (!q || !rayo_json_as_int(rayo_json_get(q, "group_size"), &group) ||
+      !rayo_json_as_int(rayo_json_get(q, "zero_point"), &zero) ||
+      !rayo_json_as_int(rayo_json_get(q, "scales_offset"), &s_offset) ||
+      !rayo_json_as_int(rayo_json_get(q, "scales_bytes"), &s_bytes) || w->shape.rank < 1) {
+    return rayo_fail(msg, RAYO_ERR_FORMAT, "tensor %s: bad int4 quantization", w->name);
+  }
+  inner = w->shape.dims[w->shape.rank - 1];
+  if (group != RAYO_PCWT_INT4_GROUP || zero != 8 || inner % group != 0) {
+    return rayo_fail(msg, RAYO_ERR_UNSUPPORTED,
+                     "tensor %s: int4 needs groups of %d along a multiple of it, zero point 8",
+                     w->name, RAYO_PCWT_INT4_GROUP);
+  }
+  if ((size_t)s_bytes != w->count / (size_t)group * 4 || !in_data(s_offset, s_bytes, data_size)) {
+    return rayo_fail(msg, RAYO_ERR_FORMAT, "tensor %s: scales outside the data", w->name);
+  }
+  w->scales = (const float *)(const void *)(data + s_offset);
+  w->scale_count = (size_t)s_bytes / 4;
+  w->zero_point = zero;
+  w->group_size = group;
+  if (padded_end(s_offset, s_bytes) > *end) *end = padded_end(s_offset, s_bytes);
+  return RAYO_OK;
+}
+
 static rayo_status read_tensor(const rayo_json *t, const rayo_u8 *data, size_t data_size,
                                rayo_weight *w, size_t *end, rayo_message *msg) {
   const char *dtype;
   const rayo_json *q;
-  size_t elem;
+  size_t elem, need;
   rayo_i32 offset, bytes;
   rayo_status s;
   w->name = rayo_json_as_string(rayo_json_get(t, "name"));
@@ -86,14 +114,18 @@ static rayo_status read_tensor(const rayo_json *t, const rayo_u8 *data, size_t d
   } else if (strcmp(dtype, "int8") == 0) {
     w->dtype = RAYO_DTYPE_I8;
     elem = 1;
+  } else if (strcmp(dtype, "int4") == 0) {
+    w->dtype = RAYO_DTYPE_I4;
+    elem = 0; /* two per byte */
   } else {
     return rayo_fail(msg, RAYO_ERR_UNSUPPORTED, "tensor %s: dtype %s", w->name, dtype);
   }
   s = read_shape(rayo_json_get(t, "shape"), &w->shape, &w->count, w->name, msg);
   if (s != RAYO_OK) return s;
+  need = elem ? w->count * elem : w->count / 2;
   if (!rayo_json_as_int(rayo_json_get(t, "offset"), &offset) ||
-      !rayo_json_as_int(rayo_json_get(t, "bytes"), &bytes) || bytes < 0 ||
-      (size_t)bytes != w->count * elem || !in_data(offset, bytes, data_size)) {
+      !rayo_json_as_int(rayo_json_get(t, "bytes"), &bytes) || bytes < 0 || (size_t)bytes != need ||
+      (!elem && w->count % 2 != 0) || !in_data(offset, bytes, data_size)) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "tensor %s: outside the data or the wrong size",
                      w->name);
   }
@@ -101,6 +133,7 @@ static rayo_status read_tensor(const rayo_json *t, const rayo_u8 *data, size_t d
   w->axis = -1;
   if (padded_end(offset, bytes) > *end) *end = padded_end(offset, bytes);
   q = rayo_json_get(t, "quantization");
+  if (w->dtype == RAYO_DTYPE_I4) return read_groups(q, data, data_size, w, end, msg);
   if ((q != NULL) != (w->dtype == RAYO_DTYPE_I8)) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "tensor %s: quantization only, and always, on int8",
                      w->name);

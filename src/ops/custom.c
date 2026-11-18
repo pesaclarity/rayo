@@ -45,6 +45,7 @@ static void view_of(const rayo_tensor *t, rayo_tensor_view *v) {
   v->shape = t->shape;
   v->data = t->data;
   v->bytes = t->data ? rayo_tensor_bytes(t) : 0;
+  if (t->data && t->dtype == RAYO_DTYPE_I4) v->bytes = t->weight->count / 2;
 }
 
 static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const void **params,

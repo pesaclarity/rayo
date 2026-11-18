@@ -63,6 +63,44 @@ RAYO_DOTPROD void rayo_gemm_i8_neon_dotprod(const rayo_i8 *RAYO_RESTRICT a, size
   if (i < m) rayo_gemm_i8_generic(a + i * lda, lda, m - i, w, ldw, n, k, c + i * ldc, ldc);
 }
 
+/* 4-bit weights as neon.c's kernel, with SDOT for the lanes of four. */
+RAYO_DOTPROD static float dot_q4(const rayo_i8 *a, const float *as, const rayo_u8 *w,
+                                 const float *ws, size_t groups) {
+  const uint8x16_t low = vdupq_n_u8(15);
+  const int8x16_t eight = vdupq_n_s8(8);
+  const int32x4_t zero = vdupq_n_s32(0);
+  float32x4_t acc0 = vdupq_n_f32(0.0f), acc1 = acc0;
+  float lanes[8];
+  size_t g;
+  for (g = 0; g < groups; g++) {
+    const uint8x16_t b = vld1q_u8(w + g * 16);
+    const int8x16_t wl = vsubq_s8(vreinterpretq_s8_u8(vandq_u8(b, low)), eight);
+    const int8x16_t wh = vsubq_s8(vreinterpretq_s8_u8(vshrq_n_u8(b, 4)), eight);
+    const float d = as[g] * ws[g];
+    const int32x4_t pl = vdotq_s32(zero, vld1q_s8(a + g * 32), wl);
+    const int32x4_t ph = vdotq_s32(zero, vld1q_s8(a + g * 32 + 16), wh);
+    acc0 = vaddq_f32(acc0, vmulq_n_f32(vcvtq_f32_s32(pl), d));
+    acc1 = vaddq_f32(acc1, vmulq_n_f32(vcvtq_f32_s32(ph), d));
+  }
+  vst1q_f32(lanes, acc0);
+  vst1q_f32(lanes + 4, acc1);
+  return rayo_q4_lanes_sum(lanes);
+}
+
+RAYO_DOTPROD void rayo_gemm_q4_neon_dotprod(const rayo_i8 *RAYO_RESTRICT a,
+                                            const float *RAYO_RESTRICT ascale, size_t m,
+                                            const rayo_u8 *RAYO_RESTRICT w,
+                                            const float *RAYO_RESTRICT wscale, size_t n, size_t k,
+                                            float *RAYO_RESTRICT c, size_t ldc) {
+  const size_t groups = k / RAYO_Q4_GROUP;
+  size_t i, j;
+  for (j = 0; j < n; j++) {
+    const rayo_u8 *wj = w + j * (k / 2);
+    const float *sj = wscale + j * groups;
+    for (i = 0; i < m; i++) c[i * ldc + j] = dot_q4(a + i * k, ascale + i * groups, wj, sj, groups);
+  }
+}
+
 rayo_bool rayo_cpu_has_dotprod(void) {
 #if defined(__linux__)
   return (getauxval(AT_HWCAP) & (1ul << 20)) != 0; /* HWCAP_ASIMDDP */

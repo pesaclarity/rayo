@@ -65,6 +65,32 @@ void rayo_gemm_i8_x86(const rayo_i8 *RAYO_RESTRICT a, size_t lda, size_t m,
   if (i < m) rayo_gemm_i8_generic(a + i * lda, lda, m - i, w, ldw, n, k, c + i * ldc, ldc);
 }
 
+/* 4-bit weights: a group's 16 bytes unpacked to 32 int8 (low four bits
+ * then high four, minus 8), multiplied by |a| with a's sign moved onto the
+ * weight (pmaddubsw, at most 2 * 127 * 8 per pair, no saturation), pairs
+ * added into int32 lanes of four products (pmaddwd), then scaled in float
+ * and added into eight lanes, as the generic kernel does. */
+static float dot_q4(const rayo_i8 *a, const float *as, const rayo_u8 *w, const float *ws,
+                    size_t groups) {
+  const __m128i low = _mm_set1_epi8(15);
+  const __m256i eight = _mm256_set1_epi8(8), ones = _mm256_set1_epi16(1);
+  __m256 acc = _mm256_setzero_ps();
+  float lanes[8];
+  size_t g;
+  for (g = 0; g < groups; g++) {
+    const __m128i b = _mm_loadu_si128((const __m128i *)(const void *)(w + g * 16));
+    const __m128i lo = _mm_and_si128(b, low), hi = _mm_and_si128(_mm_srli_epi16(b, 4), low);
+    const __m256i wv =
+        _mm256_sub_epi8(_mm256_inserti128_si256(_mm256_castsi128_si256(lo), hi, 1), eight);
+    const __m256i av = _mm256_loadu_si256((const __m256i *)(const void *)(a + g * 32));
+    const __m256i p = _mm256_madd_epi16(
+        _mm256_maddubs_epi16(_mm256_sign_epi8(av, av), _mm256_sign_epi8(wv, av)), ones);
+    acc = _mm256_add_ps(acc, _mm256_mul_ps(_mm256_cvtepi32_ps(p), _mm256_set1_ps(as[g] * ws[g])));
+  }
+  _mm256_storeu_ps(lanes, acc);
+  return rayo_q4_lanes_sum(lanes);
+}
+
 #else /* SSE4.1 */
 
 static __m128i load8(const rayo_i8 *p) {
@@ -105,7 +131,45 @@ void rayo_gemm_i8_x86(const rayo_i8 *RAYO_RESTRICT a, size_t lda, size_t m,
   }
 }
 
+/* 4-bit weights, as the AVX2 kernel, in two halves of 16. */
+static float dot_q4(const rayo_i8 *a, const float *as, const rayo_u8 *w, const float *ws,
+                    size_t groups) {
+  const __m128i low = _mm_set1_epi8(15), eight = _mm_set1_epi8(8), ones = _mm_set1_epi16(1);
+  __m128 acc0 = _mm_setzero_ps(), acc1 = acc0;
+  float lanes[8];
+  size_t g;
+  for (g = 0; g < groups; g++) {
+    const __m128i b = _mm_loadu_si128((const __m128i *)(const void *)(w + g * 16));
+    const __m128i wl = _mm_sub_epi8(_mm_and_si128(b, low), eight);
+    const __m128i wh = _mm_sub_epi8(_mm_and_si128(_mm_srli_epi16(b, 4), low), eight);
+    const __m128i al = _mm_loadu_si128((const __m128i *)(const void *)(a + g * 32));
+    const __m128i ah = _mm_loadu_si128((const __m128i *)(const void *)(a + g * 32 + 16));
+    const __m128i pl =
+        _mm_madd_epi16(_mm_maddubs_epi16(_mm_sign_epi8(al, al), _mm_sign_epi8(wl, al)), ones);
+    const __m128i ph =
+        _mm_madd_epi16(_mm_maddubs_epi16(_mm_sign_epi8(ah, ah), _mm_sign_epi8(wh, ah)), ones);
+    const __m128 d = _mm_set1_ps(as[g] * ws[g]);
+    acc0 = _mm_add_ps(acc0, _mm_mul_ps(_mm_cvtepi32_ps(pl), d));
+    acc1 = _mm_add_ps(acc1, _mm_mul_ps(_mm_cvtepi32_ps(ph), d));
+  }
+  _mm_storeu_ps(lanes, acc0);
+  _mm_storeu_ps(lanes + 4, acc1);
+  return rayo_q4_lanes_sum(lanes);
+}
+
 #endif
+
+void rayo_gemm_q4_x86(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale, size_t m,
+                      const rayo_u8 *RAYO_RESTRICT w, const float *RAYO_RESTRICT wscale, size_t n,
+                      size_t k, float *RAYO_RESTRICT c, size_t ldc) {
+  const size_t groups = k / RAYO_Q4_GROUP;
+  size_t i, j;
+  for (j = 0; j < n; j++) {
+    const rayo_u8 *wj = w + j * (k / 2);
+    const float *sj = wscale + j * groups;
+    for (i = 0; i < m; i++) c[i * ldc + j] = dot_q4(a + i * k, ascale + i * groups, wj, sj, groups);
+  }
+}
 
 #else
 /* ISO C needs a declaration in every translation unit. */
