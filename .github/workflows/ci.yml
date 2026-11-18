@@ -72,6 +72,8 @@ jobs:
         run: tool/ci/test.sh ${{ matrix.cc }} -msse4.1
       - name: AVX2 build
         run: tool/ci/test.sh ${{ matrix.cc }} -mavx2 -mfma
+      - name: Plain C89 platform (files read with fread, one thread)
+        run: tool/ci/test.sh ${{ matrix.cc }} -DRAYO_NO_PLATFORM
       - name: erf, every float in [0, 4]
         run: tool/ci/erf.sh ${{ matrix.cc }}
       - name: Chat example, built with make, a scripted conversation
