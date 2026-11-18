@@ -4,11 +4,14 @@
  *   symbol), such as the positions P .. P + T - 1 of the new tokens.
  * cache_write: writes x [T, C] into rows at .. at + T - 1 of a state
  *   [N, C] and gives the state's rows 0 .. at + T - 1, a view: the keys or
- *   values of every position so far.
+ *   values of every position so far. A session may keep the state in int8
+ *   with a scale per row and group (rayo_session_options.cache): each row
+ *   is then quantised as it is written, and the view is int8 too.
  * last_row: the last row of x [T, C], as [C]. */
 #include <string.h>
 
 #include "core/message.h"
+#include "kernels/kernels.h"
 #include "ops/attrs.h"
 #include "ops/ops.h"
 
@@ -78,9 +81,14 @@ static rayo_status cache_infer(const void *params, const rayo_tensor *in, const 
     return rayo_fail(msg, RAYO_ERR_SHAPE, "cache_write: %ld rows at %ld do not fit %ld",
                      (long)x->dims[0], (long)at, (long)st->dims[0]);
   }
-  out->dtype = RAYO_DTYPE_F32;
+  if (in[0].dtype == RAYO_DTYPE_I8 && (in[0].group <= 0 || st->dims[1] % in[0].group != 0)) {
+    return rayo_fail(msg, RAYO_ERR_SHAPE, "cache_write: an int8 state needs groups of its rows");
+  }
+  out->dtype = in[0].dtype;
   out->shape = *st;
   out->shape.dims[0] = at + x->dims[0];
+  out->scales = in[0].scales;
+  out->group = in[0].group;
   *scratch = 0;
   return RAYO_OK;
 }
@@ -91,6 +99,12 @@ static rayo_status cache_run(const void *params, const rayo_tensor *in, rayo_ten
   const size_t at = (size_t)rayo_size_value(p->start, exec->symbols);
   const size_t c = (size_t)in[0].shape.dims[1];
   /* out->data is the state's memory: the view the next ops read. */
+  if (out->dtype == RAYO_DTYPE_I8) {
+    const size_t g = (size_t)out->group;
+    rayo_quantize_groups_of(in[1].data, (size_t)in[1].shape.dims[0], c, g,
+                            (rayo_i8 *)out->data + at * c, out->scales + at * (c / g));
+    return RAYO_OK;
+  }
   memcpy((float *)out->data + at * c, in[1].data, rayo_tensor_bytes(&in[1]));
   return RAYO_OK;
 }

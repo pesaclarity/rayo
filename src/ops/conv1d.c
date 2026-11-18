@@ -57,7 +57,7 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
     return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: size %ld does not fit the kernel or centre",
                      spec->output, (long)size);
   }
-  if (kernel->dtype == RAYO_DTYPE_I4) {
+  if (kernel->dtype == RAYO_DTYPE_I4 || kernel->dtype == RAYO_DTYPE_I3) {
     return rayo_fail(msg, RAYO_ERR_UNSUPPORTED, "node %s: conv1d takes float32 or int8 kernels",
                      spec->output);
   }

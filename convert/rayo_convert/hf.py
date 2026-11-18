@@ -191,19 +191,39 @@ def quantize_int8(w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return q, scale
 
 
-def quantize_int4(w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """4-bit, a float32 scale per group of 32 along the rows (docs/FORMAT.md, ``int4``): the
-    value of largest magnitude maps to -8, the scale is it / -8, values round to nearest in
-    [-8, 7] and are stored plus 8, byte j of a group holding value j (low four bits) and
-    value j + 16 (high four)."""
+HALF_MAX = 65504.0  # the largest float16
+
+
+def _scales(scale: np.ndarray, scale_dtype: str) -> np.ndarray:
+    """Group scales as stored: float32, or float16 (rounded to nearest)."""
+    if scale_dtype == "float32":
+        return scale.astype(np.float32)
+    if scale_dtype != "float16":
+        raise ConvertError(f"scales {scale_dtype!r}: float32 or float16")
+    if np.abs(scale).max(initial=0.0) > HALF_MAX:
+        raise ConvertError("a group's scale is beyond float16's range: convert with "
+                           "--scales float32")
+    return scale.astype(np.float16)
+
+
+def _inverse(scale: np.ndarray) -> np.ndarray:
+    s = scale.astype(np.float32)
+    return np.where(s != 0, 1.0 / np.where(s != 0, s, 1), 0.0).astype(np.float32)
+
+
+def quantize_int4(w: np.ndarray, scale_dtype: str = "float32") -> tuple[np.ndarray, np.ndarray]:
+    """4-bit, a scale per group of 32 along the rows (docs/FORMAT.md, ``int4``): the value of
+    largest magnitude maps to -8, the scale is it / -8 (float32, or rounded to float16), values
+    round to nearest in [-8, 7] with that scale and are stored plus 8, byte j of a group
+    holding value j (low four bits) and value j + 16 (high four)."""
     rows, k = w.shape
     if k % GROUP:
         raise ConvertError(f"int4 needs rows of a multiple of {GROUP}, not {k}")
     g = w.reshape(rows, k // GROUP, GROUP)
     idx = np.abs(g).argmax(axis=2)
     top = np.take_along_axis(g, idx[..., None], axis=2)[..., 0]
-    scale = (top / -8.0).astype(np.float32)
-    inv = np.where(scale != 0, 1.0 / np.where(scale != 0, scale, 1), 0.0).astype(np.float32)
+    scale = _scales((top / -8.0).astype(np.float32), scale_dtype)
+    inv = _inverse(scale)
     q = np.clip(np.round(g * inv[..., None]), -8, 7).astype(np.int16) + 8
     q = q.astype(np.uint8)
     packed = q[..., :16] | (q[..., 16:] << 4)
@@ -214,7 +234,57 @@ def dequantize_int4(packed: np.ndarray, scale: np.ndarray) -> np.ndarray:
     rows = packed.shape[0]
     p = packed.reshape(rows, -1, 16)
     q = np.concatenate([p & 15, p >> 4], axis=2).astype(np.float32) - 8
-    return (q * scale[..., None]).reshape(rows, -1).astype(np.float32)
+    return (q * scale.astype(np.float32)[..., None]).reshape(rows, -1).astype(np.float32)
+
+
+# The scales tried for each int3 group, as fractions of the largest magnitude over 4: the
+# one with the least squared error is kept (3 bits are too few for the largest value alone
+# to set the scale well).
+_Q3_TRIALS = np.array([1.0, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7], dtype=np.float32)
+
+
+def quantize_int3(w: np.ndarray, scale_dtype: str = "float16") -> tuple[np.ndarray, np.ndarray]:
+    """3-bit, a scale per group of 32 along the rows (docs/FORMAT.md, ``int3``): values in
+    [-4, 3] stored plus 4. The scale is chosen per group among `top / -4 * f` (top the value
+    of largest magnitude, f in _Q3_TRIALS) for the least squared error, with values rounded
+    to nearest and clipped. A group is 12 bytes: byte j (0 to 7) holds the low two bits of
+    values j, j + 8, j + 16 and j + 24 (bits 0-1, 2-3, 4-5, 6-7); bytes 8 to 11, a
+    little-endian word, bit i the third bit of value i."""
+    rows, k = w.shape
+    if k % GROUP:
+        raise ConvertError(f"int3 needs rows of a multiple of {GROUP}, not {k}")
+    g = w.reshape(rows, k // GROUP, GROUP).astype(np.float32)
+    idx = np.abs(g).argmax(axis=2)
+    top = np.take_along_axis(g, idx[..., None], axis=2)[..., 0]
+    best_err = np.full(top.shape, np.inf, dtype=np.float64)
+    scale = np.zeros(top.shape, dtype=np.float32)
+    for f in _Q3_TRIALS:
+        cand = _scales((top / -4.0 * f).astype(np.float32), scale_dtype)
+        c32 = cand.astype(np.float32)
+        q = np.clip(np.round(g * _inverse(cand)[..., None]), -4, 3)
+        err = ((q * c32[..., None] - g) ** 2).sum(axis=2, dtype=np.float64)
+        better = err < best_err
+        best_err = np.where(better, err, best_err)
+        scale = np.where(better, c32, scale)
+    stored = _scales(scale, scale_dtype)
+    q = (np.clip(np.round(g * _inverse(stored)[..., None]), -4, 3) + 4).astype(np.uint8)
+    low = q & 3
+    planes = low[..., 0:8] | (low[..., 8:16] << 2) | (low[..., 16:24] << 4) | (low[..., 24:32] << 6)
+    high = (q >> 2) & 1
+    word = (high.astype(np.uint32) << np.arange(32, dtype=np.uint32)).sum(axis=2, dtype=np.uint32)
+    hb = np.stack([(word >> (8 * b)) & 255 for b in range(4)], axis=2).astype(np.uint8)
+    packed = np.concatenate([planes.astype(np.uint8), hb], axis=2)
+    return packed.reshape(rows, k // GROUP * 12), stored.reshape(rows, k // GROUP)
+
+
+def dequantize_int3(packed: np.ndarray, scale: np.ndarray) -> np.ndarray:
+    rows = packed.shape[0]
+    p = packed.reshape(rows, -1, 12)
+    low = np.concatenate([(p[..., :8] >> (2 * s)) & 3 for s in range(4)], axis=2)
+    word = sum(p[..., 8 + b].astype(np.uint32) << (8 * b) for b in range(4))
+    high = (word[..., None] >> np.arange(32, dtype=np.uint32)) & 1
+    q = (low.astype(np.int32) | (high.astype(np.int32) << 2)) - 4
+    return (q * scale.astype(np.float32)[..., None]).reshape(rows, -1).astype(np.float32)
 
 
 def dequantize_int8(q: np.ndarray, scale: np.ndarray) -> np.ndarray:
@@ -228,16 +298,17 @@ class Planned:
     """A tensor of the output file: its entry and how to make its bytes."""
 
     name: str
-    dtype: str  # float32, int8 or int4
+    dtype: str  # float32, int8, int4 or int3
     shape: list[int]
     make: Any  # () -> (data bytes, scales bytes or None)
     nbytes: int
     scale_bytes: int = 0
+    scale_dtype: str = "float32"  # int4 and int3
     entry: dict[str, Any] = field(default_factory=dict)
 
 
-def _layout(tensors: list[Planned]) -> None:
-    at = 0
+def _layout(tensors: list[Planned], start: int = 0) -> None:
+    at = start
     for t in tensors:
         t.entry = {"name": t.name, "dtype": t.dtype, "shape": t.shape, "offset": at,
                    "bytes": t.nbytes}
@@ -246,17 +317,29 @@ def _layout(tensors: list[Planned]) -> None:
             t.entry["quantization"] = {"axis": 0, "zero_point": 0, "scales_offset": at,
                                        "scales_bytes": t.scale_bytes}
             at += t.scale_bytes + (-t.scale_bytes % ALIGN)
-        elif t.dtype == "int4":
-            t.entry["quantization"] = {"group_size": GROUP, "zero_point": 8,
+        elif t.dtype in ("int4", "int3"):
+            t.entry["quantization"] = {"group_size": GROUP,
+                                       "zero_point": 8 if t.dtype == "int4" else 4,
                                        "scales_offset": at, "scales_bytes": t.scale_bytes}
+            if t.scale_dtype != "float32":  # files with float32 scales stay as they were
+                t.entry["quantization"]["scale_dtype"] = t.scale_dtype
             at += t.scale_bytes + (-t.scale_bytes % ALIGN)
 
 
-def write_file(path: Path, header: dict[str, Any], tensors: list[Planned]) -> int:
+def write_file(path: Path, header: dict[str, Any], tensors: list[Planned],
+               tokenizer: bytes | None = None) -> int:
     """Writes PCWT version 1, its data starting (and each tensor starting) at a multiple of
     ALIGN bytes from the start of the file, so a mapped file's weights are aligned. The data
-    ends on the last tensor's padded end, as rayo checks."""
-    _layout(tensors)
+    ends on the last tensor's padded end, as rayo checks. A tokeniser table
+    (tokenizer_table.py) goes first in the data, named by the header's "tokenizer"."""
+    start = 0
+    if tokenizer is not None:
+        if len(tokenizer) % 4:
+            raise AssertionError("a tokeniser table is whole words")
+        header = {**header, "tokenizer": {"offset": 0, "bytes": len(tokenizer),
+                                          "format": "rayo-tokenizer-table", "version": 1}}
+        start = len(tokenizer) + (-len(tokenizer) % ALIGN)
+    _layout(tensors, start)
     # The last tensor's padding is to 4, not ALIGN (rayo checks the data's end exactly).
     last = tensors[-1]
     last_end = (last.entry.get("quantization", {}).get("scales_offset", last.entry["offset"])
@@ -268,6 +351,9 @@ def write_file(path: Path, header: dict[str, Any], tensors: list[Planned]) -> in
     with path.open("wb") as f:
         f.write(b"PCWT" + struct.pack("<II", 1, len(h)) + h)
         written = 0
+        if tokenizer is not None:
+            f.write(tokenizer)
+            written = len(tokenizer)
         for t in tensors:
             data, scales = t.make()
             _put(f, t.entry["offset"] - written)
@@ -290,6 +376,28 @@ def _put(f: BinaryIO, n: int) -> None:
 
 # ---- the graph -------------------------------------------------------------------------------
 
+# The roles a matrix has in the graph, for --q3: which layers' weights take 3 bits.
+ROLES = ("attn_q", "attn_k", "attn_v", "attn_o", "mlp_gate", "mlp_up", "mlp_down", "embed")
+ROLE_GROUPS = {"attn": ("attn_q", "attn_k", "attn_v", "attn_o"),
+               "mlp": ("mlp_gate", "mlp_up", "mlp_down"), "mlp_in": ("mlp_gate", "mlp_up")}
+
+
+def q3_roles(spec: str | None) -> tuple[str, ...]:
+    """The roles named by a --q3 value: a comma-separated list of ROLES and ROLE_GROUPS."""
+    out: list[str] = []
+    for part in (spec or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        names = ROLE_GROUPS.get(part, (part,))
+        for n in names:
+            if n not in ROLES:
+                raise ConvertError(f"--q3 {part!r}: one of {', '.join(ROLES + tuple(ROLE_GROUPS))}")
+            if n not in out:
+                out.append(n)
+    return tuple(out)
+
+
 @dataclass
 class HfOptions:
     name: str | None = None
@@ -298,6 +406,9 @@ class HfOptions:
     positions: str = "last"  # last or all
     chunk: int = 64  # the most prompt tokens one run takes
     metadata: dict[str, Any] | None = None
+    scales: str = "float16"  # q4 and q3 group scales: float16 or float32
+    q3: tuple[str, ...] = ()  # with q4: the roles (ROLES) whose matrices take 3 bits
+    tokenizer_table: bool = True  # write the tokeniser's table into the file
 
 
 def _proj(st: SafeTensors, prefix: str, parts: list[tuple[str, int]],
@@ -325,6 +436,10 @@ def build(src: Path, opts: HfOptions) -> tuple[dict[str, Any], list[Planned], li
     notes = list(dec.notes)
     if opts.weights not in ("float32", "int8", "q4"):
         raise ConvertError(f"weights {opts.weights!r}: float32, int8 or q4")
+    if opts.q3 and opts.weights != "q4":
+        raise ConvertError("--q3 goes with --weights q4")
+    if opts.scales not in ("float16", "float32"):
+        raise ConvertError(f"scales {opts.scales!r}: float16 or float32")
     tensors: list[Planned] = []
     have: dict[str, str] = {}
 
@@ -341,7 +456,8 @@ def build(src: Path, opts: HfOptions) -> tuple[dict[str, Any], list[Planned], li
         tensors.append(Planned(name, "float32", s, make, int(np.prod(s)) * 4))
         return name
 
-    def plan_matrix(name: str, src_name: str, rows: slice | None = None) -> str:
+    def plan_matrix(name: str, src_name: str, rows: slice | None = None,
+                    role: str = "") -> str:
         key = f"{src_name}|{rows}"
         if key in have:
             return have[key]
@@ -368,11 +484,21 @@ def build(src: Path, opts: HfOptions) -> tuple[dict[str, Any], list[Planned], li
             tensors.append(Planned(name, "int8", shape, make8, shape[0] * shape[1],
                                    shape[0] * 4))
         else:
-            def make4() -> tuple[bytes, bytes]:
-                q, s = quantize_int4(load())
-                return q.tobytes(), s.astype("<f4").tobytes()
-            tensors.append(Planned(name, "int4", shape, make4, shape[0] * shape[1] // 2,
-                                   shape[0] * shape[1] // GROUP * 4))
+            sd = opts.scales
+            ssize = 2 if sd == "float16" else 4
+            groups = shape[0] * shape[1] // GROUP
+            if role in opts.q3:
+                def make3() -> tuple[bytes, bytes]:
+                    q, s = quantize_int3(load(), sd)
+                    return q.tobytes(), s.astype("<f2" if sd == "float16" else "<f4").tobytes()
+                tensors.append(Planned(name, "int3", shape, make3, groups * 12, groups * ssize,
+                                       sd))
+            else:
+                def make4() -> tuple[bytes, bytes]:
+                    q, s = quantize_int4(load(), sd)
+                    return q.tobytes(), s.astype("<f2" if sd == "float16" else "<f4").tobytes()
+                tensors.append(Planned(name, "int4", shape, make4, groups * 16, groups * ssize,
+                                       sd))
         have[key] = name
         return name
 
@@ -384,7 +510,7 @@ def build(src: Path, opts: HfOptions) -> tuple[dict[str, Any], list[Planned], li
     if list(st.shape(embed_name)) != [dec.vocab, dec.hidden]:
         notes.append(f"embedding {st.shape(embed_name)}, config vocab {dec.vocab}")
     vocab = st.shape(embed_name)[0]
-    emb = plan_matrix("embed", embed_name)
+    emb = plan_matrix("embed", embed_name, role="embed")
     nodes: list[dict[str, Any]] = [
         {"op": "range", "inputs": [], "output": "pos", "start": "P", "size": "T"},
         {"op": "gather", "inputs": [emb, "tokens"], "output": "x0"},
@@ -422,11 +548,12 @@ def build(src: Path, opts: HfOptions) -> tuple[dict[str, Any], list[Planned], li
                 bias = [plan_float(f"l{i}.{part[0]}.bias", bname)]
             elif rows is not None and f"{a}.qkv_proj.bias" in st:
                 bias = [plan_float(f"l{i}.{part[0]}.bias", f"{a}.qkv_proj.bias", rows)]
-            dense[part] = [plan_matrix(f"l{i}.{part[0]}", sname, rows), *bias]
-        o = plan_matrix(f"l{i}.o", f"{a}.o_proj.weight")
-        gate = plan_matrix(f"l{i}.gate", *mlp["gate_proj"])
-        up = plan_matrix(f"l{i}.up", *mlp["up_proj"])
-        down = plan_matrix(f"l{i}.down", f"{p}.mlp.down_proj.weight")
+            dense[part] = [plan_matrix(f"l{i}.{part[0]}", sname, rows, f"attn_{part[0]}"),
+                           *bias]
+        o = plan_matrix(f"l{i}.o", f"{a}.o_proj.weight", role="attn_o")
+        gate = plan_matrix(f"l{i}.gate", *mlp["gate_proj"], role="mlp_gate")
+        up = plan_matrix(f"l{i}.up", *mlp["up_proj"], role="mlp_up")
+        down = plan_matrix(f"l{i}.down", f"{p}.mlp.down_proj.weight", role="mlp_down")
         states += [{"name": f"keys_{i}", "dtype": "float32", "shape": [dec.context, KV * hd]},
                    {"name": f"values_{i}", "dtype": "float32", "shape": [dec.context, KV * hd]}]
         n = f"l{i}"
@@ -467,7 +594,7 @@ def build(src: Path, opts: HfOptions) -> tuple[dict[str, Any], list[Planned], li
         nodes.append({"op": "last_row", "inputs": [x], "output": "xl"})
         x = "xl"
     if "lm_head.weight" in st and not dec.tied:
-        head = plan_matrix("lm_head", "lm_head.weight")
+        head = plan_matrix("lm_head", "lm_head.weight", role="embed")
     else:
         head = emb
         notes.append("output tied to the embedding")
@@ -492,13 +619,20 @@ def build(src: Path, opts: HfOptions) -> tuple[dict[str, Any], list[Planned], li
         "head_dim": hd, "vocab": vocab, "context": dec.context, "chunk": chunk,
         "weights": opts.weights,
     }
+    if opts.weights == "q4":
+        if opts.scales != "float32":
+            meta["scales"] = opts.scales
+        if opts.q3:
+            meta["q3"] = list(opts.q3)
     meta.update(generation_metadata(src))
     if opts.metadata:
         meta.update(opts.metadata)
     header = {"format_version": 1, "model": opts.name or src.name, "source": "huggingface",
               "graph": graph, "metadata": meta}
     notes.append(f"{dec.layers} layers, {H} heads ({KV} key/value), head {hd}, "
-                 f"{dec.activation}, weights {opts.weights}")
+                 f"{dec.activation}, weights {opts.weights}"
+                 + (f" ({opts.scales} scales)" if opts.weights == "q4" else "")
+                 + (f", 3 bits for {', '.join(opts.q3)}" if opts.q3 else ""))
     return header, tensors, notes
 
 
@@ -599,15 +733,23 @@ def chat_turns(template: str, tc: dict[str, Any]) -> dict[str, str]:
 
 
 def convert_dir(src: str | Path, out: str | Path, opts: HfOptions | None = None) -> tuple[int, list[str]]:
-    """Converts the model in ``src`` to the rayo file ``out``, and copies its tokenizer.json
-    next to it (``out`` with ``.tokenizer.json``). The file's size and the notes."""
+    """Converts the model in ``src`` to the rayo file ``out``, with its tokeniser's table in
+    it (unless opts.tokenizer_table is off), and copies its tokenizer.json next to it (``out``
+    with ``.tokenizer.json``, for tools; rayo does not need it). The file's size and the
+    notes."""
+    from . import tokenizer_table
+
     opts = opts or HfOptions()
     src, out = Path(src), Path(out)
     if opts.name is None:
         opts = HfOptions(**{**opts.__dict__, "name": out.stem})
     header, tensors, notes = build(src, opts)
-    size = write_file(out, header, tensors)
     tok = src / "tokenizer.json"
+    table = None
+    if opts.tokenizer_table and tok.exists():
+        table = tokenizer_table.table(tok.read_bytes())
+        notes.append(f"tokeniser table: {len(table)} bytes, in the file")
+    size = write_file(out, header, tensors, table)
     if tok.exists():
         dest = tokenizer_path(out)
         dest.write_bytes(tok.read_bytes())

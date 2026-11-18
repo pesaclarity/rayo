@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "core/message.h"
+#include "kernels/half.h"
 #include "ops/ops.h"
 
 typedef struct gather_params {
@@ -61,17 +62,29 @@ static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *o
   if (p->table->dtype == RAYO_DTYPE_F32) {
     const float *t = p->table->data;
     for (i = 0; i < n; i++) memcpy(y + i * w, t + (size_t)ids[i] * w, w * sizeof(float));
-  } else if (p->table->dtype == RAYO_DTYPE_I4) {
-    /* Groups of RAYO_PCWT_INT4_GROUP along the row, two values a byte. */
-    const rayo_u8 *t = p->table->data;
-    const size_t g = (size_t)p->table->group_size, groups = w / g;
+  } else if (p->table->dtype == RAYO_DTYPE_I4 || p->table->dtype == RAYO_DTYPE_I3) {
+    /* Groups of RAYO_PCWT_INT4_GROUP along the row (docs/FORMAT.md). */
+    const rayo_weight *tw = p->table;
+    const rayo_u8 *t = tw->data;
+    const size_t g = (size_t)tw->group_size, groups = w / g;
+    const size_t bytes =
+        tw->dtype == RAYO_DTYPE_I4 ? RAYO_PCWT_INT4_GROUP_BYTES : RAYO_PCWT_INT3_GROUP_BYTES;
     for (i = 0; i < n; i++) {
-      const rayo_u8 *row = t + (size_t)ids[i] * (w / 2);
-      const float *sc = p->table->scales + (size_t)ids[i] * groups;
+      const rayo_u8 *row = t + (size_t)ids[i] * groups * bytes;
       for (j = 0; j < w; j++) {
-        const rayo_u8 b = row[j / g * (g / 2) + j % (g / 2)];
-        const int v = (j % g < g / 2 ? b & 15 : b >> 4) - 8;
-        y[i * w + j] = (float)v * sc[j / g];
+        const rayo_u8 *gb = row + j / g * bytes;
+        const size_t e = j % g;
+        const size_t s = (size_t)ids[i] * groups + j / g;
+        const float sc = rayo_group_scale(tw->group_scales, tw->scales_half, s);
+        int v;
+        if (tw->dtype == RAYO_DTYPE_I4) {
+          v = (e < 16 ? gb[e] & 15 : gb[e - 16] >> 4) - 8;
+        } else {
+          v = (int)((((unsigned)gb[e % 8] >> (2 * (e / 8))) & 3u) |
+                    ((((unsigned)gb[8 + e / 8] >> (e % 8)) & 1u) << 2)) -
+              4;
+        }
+        y[i * w + j] = (float)v * sc;
       }
     }
   } else {

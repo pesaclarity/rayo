@@ -5,8 +5,93 @@
 
 #include "core/alloc.h"
 #include "core/message.h"
+#include "ops/ops.h"
 
-static rayo_status plan(rayo_session *s, rayo_message *msg) {
+/* Whether node `n` reads state `index` (as `kind`) or node output `index`. */
+static rayo_bool reads(const rayo_node *n, rayo_ref_kind kind, rayo_i32 index, rayo_i32 *at) {
+  rayo_i32 a;
+  for (a = 0; a < n->input_count; a++) {
+    if (n->inputs[a].kind == kind && n->inputs[a].index == index) {
+      *at = a;
+      return RAYO_TRUE;
+    }
+  }
+  return RAYO_FALSE;
+}
+
+/* The int8 cache's group for state `index`: its head size, when only
+ * cache_write nodes write it and only attention nodes read what they
+ * write; else 0 (float32). */
+static rayo_i32 cache_group(const rayo_graph *g, rayo_i32 index) {
+  const rayo_graph_input *st = &g->states[index];
+  rayo_i32 i, j, o, at, group = 0;
+  rayo_i32 width;
+  if (st->rank != 2) return 0;
+  width = st->dims[1].value;
+  for (i = 0; i < g->node_count; i++) {
+    if (!reads(&g->nodes[i], RAYO_REF_STATE, index, &at)) continue;
+    if (g->nodes[i].op != &rayo_op_cache_write || at != 0) return 0;
+    for (o = 0; o < g->output_count; o++) {
+      if (g->outputs[o].node == i) return 0;
+    }
+    for (j = i + 1; j < g->node_count; j++) {
+      rayo_i32 kv, hd;
+      if (!reads(&g->nodes[j], RAYO_REF_NODE, i, &at)) continue;
+      if (g->nodes[j].op != &rayo_op_attention || at == 0) return 0;
+      kv = rayo_attention_kv_heads(g->nodes[j].params);
+      if (kv < 1 || width % kv != 0) return 0;
+      hd = width / kv;
+      if (group != 0 && group != hd) return 0;
+      group = hd;
+    }
+  }
+  return group;
+}
+
+static rayo_status apply_options(rayo_session *s, const rayo_session_options *o,
+                                 rayo_message *msg) {
+  const rayo_graph *g = &s->model->graph;
+  rayo_i32 i;
+  int l;
+  s->symbol_max = rayo_arena_array(&s->book, (size_t)g->symbol_count + 1, sizeof *s->symbol_max);
+  s->symbols = rayo_arena_array(&s->book, (size_t)g->symbol_count + 1, sizeof *s->symbols);
+  s->state_rows = rayo_arena_array(&s->book, (size_t)g->state_count + 1, sizeof *s->state_rows);
+  s->state_group = rayo_arena_array(&s->book, (size_t)g->state_count + 1, sizeof *s->state_group);
+  if (!s->symbol_max || !s->symbols || !s->state_rows || !s->state_group) {
+    return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
+  }
+  for (i = 0; i < g->symbol_count; i++) {
+    s->symbol_max[i] = g->symbol_max[i];
+    s->symbols[i] = g->symbol_plan[i];
+  }
+  if (!o) return RAYO_OK;
+  if (o->state_rows < 0 || o->limit_count < 0 || (o->limit_count > 0 && !o->limits) ||
+      (o->cache != RAYO_CACHE_FLOAT32 && o->cache != RAYO_CACHE_INT8)) {
+    return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "bad session options");
+  }
+  for (l = 0; l < o->limit_count; l++) {
+    const rayo_symbol_limit *lim = &o->limits[l];
+    i = lim->name ? rayo_graph_symbol(g, lim->name) : -1;
+    if (i < 0) {
+      return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "no size symbol %s",
+                       lim->name ? lim->name : "(null)");
+    }
+    if (lim->max < 0 || lim->max > g->symbol_max[i] || lim->plan < 0 || lim->plan > lim->max) {
+      return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT,
+                       "%s: a limit of 0 to %ld, planned at most at the limit", lim->name,
+                       (long)g->symbol_max[i]);
+    }
+    s->symbol_max[i] = lim->max;
+    s->symbols[i] = lim->plan;
+  }
+  for (i = 0; i < g->state_count; i++) {
+    s->state_rows[i] = o->state_rows;
+    s->state_group[i] = o->cache == RAYO_CACHE_INT8 ? cache_group(g, i) : 0;
+  }
+  return RAYO_OK;
+}
+
+static rayo_status plan(rayo_session *s, const rayo_session_options *o, rayo_message *msg) {
   const rayo_graph *g = &s->model->graph;
   rayo_values *v = &s->values;
   size_t scratch;
@@ -16,11 +101,13 @@ static rayo_status plan(rayo_session *s, rayo_message *msg) {
   v->states = rayo_arena_array(&s->book, (size_t)g->state_count + 1, sizeof *v->states);
   v->nodes = rayo_arena_array(&s->book, (size_t)g->node_count, sizeof *v->nodes);
   v->args = rayo_arena_array(&s->book, (size_t)g->max_node_inputs + 1, sizeof *v->args);
-  s->symbols = rayo_arena_array(&s->book, (size_t)g->symbol_count + 1, sizeof *s->symbols);
-  if (!v->inputs || !v->states || !v->nodes || !v->args || !s->symbols) {
+  if (!v->inputs || !v->states || !v->nodes || !v->args) {
     return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   }
-  for (i = 0; i < g->symbol_count; i++) s->symbols[i] = g->symbol_plan[i];
+  st = apply_options(s, o, msg);
+  if (st != RAYO_OK) return st;
+  v->state_rows = s->state_rows;
+  v->state_group = s->state_group;
   st = rayo_graph_shapes(g, &s->model->pcwt, s->symbols, v, &scratch, msg);
   if (st != RAYO_OK) return st;
   st = rayo_plan_make(g, v, scratch, &s->book, &s->plan, msg);
@@ -28,9 +115,17 @@ static rayo_status plan(rayo_session *s, rayo_message *msg) {
   s->planned = rayo_arena_array(&s->book, (size_t)g->node_count, sizeof *s->planned);
   if (!s->planned) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   for (i = 0; i < g->node_count; i++) s->planned[i] = rayo_tensor_bytes(&v->nodes[i]);
-  s->memory = rayo_aligned_alloc(s->plan.arena_bytes);
+  /* Whole pages from the system: a cache's rows cost memory only once
+   * written, and a reset gives them back. */
+  s->memory = rayo_pages_alloc(s->plan.arena_bytes);
   if (!s->memory) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
-  for (i = 0; i < g->state_count; i++) v->states[i].data = s->memory + s->plan.state_offset[i];
+  s->memory_bytes = s->plan.arena_bytes;
+  for (i = 0; i < g->state_count; i++) {
+    v->states[i].data = s->memory + s->plan.state_offset[i];
+    if (v->states[i].group > 0) {
+      v->states[i].scales = rayo_tensor_scales_at(v->states[i].data, &v->states[i]);
+    }
+  }
   for (i = 0; i < g->input_count; i++) v->inputs[i].data = s->memory + s->plan.input_offset[i];
   for (i = 0; i < g->node_count; i++) v->nodes[i].data = s->memory + s->plan.node_offset[i];
   /* Again, so the nodes that view a state get its memory. */
@@ -54,7 +149,7 @@ rayo_status rayo_session_create_with(const rayo_model *model, const rayo_session
   rayo_kernels_best(&s->kernels);
   if (threads < 0) threads = rayo_cpu_fast_cores();
   s->pool = rayo_pool_create(threads);
-  st = plan(s, msg);
+  st = plan(s, options, msg);
   if (st != RAYO_OK) {
     rayo_session_destroy(s);
     return st;
@@ -66,7 +161,7 @@ rayo_status rayo_session_create_with(const rayo_model *model, const rayo_session
 void rayo_session_destroy(rayo_session *session) {
   if (!session) return;
   rayo_pool_destroy(session->pool);
-  rayo_aligned_free(session->memory);
+  rayo_pages_free(session->memory, session->memory_bytes);
   rayo_arena_free(&session->book);
   free(session);
 }
@@ -97,9 +192,9 @@ rayo_status rayo_session_bind(rayo_session *session, const char *name, rayo_i32 
   g = &session->model->graph;
   i = rayo_graph_symbol(g, name);
   if (i < 0) return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "no size symbol %s", name);
-  if (value < 0 || value > g->symbol_max[i]) {
+  if (value < 0 || value > session->symbol_max[i]) {
     return rayo_fail(msg, RAYO_ERR_SHAPE, "%s = %ld, it must be 0 to %ld", name, (long)value,
-                     (long)g->symbol_max[i]);
+                     (long)session->symbol_max[i]);
   }
   before = session->symbols[i];
   session->symbols[i] = value;
@@ -169,6 +264,9 @@ void rayo_session_memory(const rayo_session *session, rayo_memory_info *out) {
   rayo_model_memory(session->model, out);
   out->arena = session->plan.arena_bytes;
   out->overhead += session->book.bytes;
+  out->states = session->plan.input_offset && session->model->graph.input_count > 0
+                    ? session->plan.input_offset[0]
+                    : 0;
 }
 
 const char *rayo_session_kernels(const rayo_session *session) {
@@ -179,7 +277,8 @@ void rayo_session_reset(rayo_session *session) {
   rayo_i32 i;
   if (!session) return;
   for (i = 0; i < session->model->graph.state_count; i++) {
-    memset(session->values.states[i].data, 0, rayo_tensor_bytes(&session->values.states[i]));
+    rayo_pages_zero(session->values.states[i].data,
+                    rayo_tensor_storage(&session->values.states[i]));
   }
 }
 

@@ -4,6 +4,17 @@ Written from the conventional commit titles on `main` at each release.
 
 ## Unreleased
 
+- Small language models in less memory, for phones of 2 GB: an int8 key/value cache
+  (`RAYO_CACHE_INT8`, a scale per token and head); a session's own context and symbol limits
+  (`rayo_session_options.state_rows`, `limits`), the generator's `context` (1024 by
+  default), `chunk` (32) and `cache`; float16 group scales for int4 (`scale_dtype`, 4.5 bits a
+  weight) and 3-bit groups (`int3`, `rayo-convert --q3` by role), with generic, SSE4.1, AVX2,
+  NEON and SDOT kernels the same bit for bit; the tokeniser's table written into the model
+  file and read in place (`rayo_tokenizer_from_model`); `madvise` hints on the mapping
+  (`rayo_model_options.access`); `rayo_process_memory` (private and file-backed resident);
+  `rayo_cpu_default_threads` (2 on Android). A SmolLM2-135M chat of 1000 tokens: 15 MB of its
+  own memory instead of 62 MB. docs/RUNNING-SLMS.md has the numbers.
+
 - rayo is a general runtime, with nothing specific to one model:
   - **Ops:** `compare` and `masked_reduce` replace the Ask reader's `mask`, `masked_max` and
     `masked_mean`. Graphs that name the old ops must be written again: pesaclarity-ml does

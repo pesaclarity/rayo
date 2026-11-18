@@ -16,10 +16,12 @@ from rayo_convert.runtime import Model, Session
 PROMPTS = [[1, 5, 9, 200, 17, 3], [1, 250, 251, 252], [1, 42], [1, 7, 7, 7, 7, 7, 7, 7, 8, 9]]
 
 
-def convert(tmp_path, cfg, w, weights="float32", positions="last", name="m", **kw):
+def convert(tmp_path, cfg, w, weights="float32", positions="last", name="m", scales="float16",
+            q3=(), **kw):
     d = write_model(tmp_path / f"{name}-src", cfg, w, **kw)
     out = tmp_path / f"{name}.weights"
-    hf.convert_dir(d, out, hf.HfOptions(weights=weights, positions=positions))
+    hf.convert_dir(d, out, hf.HfOptions(weights=weights, positions=positions, scales=scales,
+                                        q3=hf.q3_roles(",".join(q3))))
     return out
 
 
@@ -120,14 +122,115 @@ def test_quantised_against_its_own_dequantised_weights(lib, tmp_path):
     leaves only the activations' int8 rounding."""
     cfg = tiny_config(hidden_size=128, intermediate_size=256)
     w = tiny_weights(cfg, seed=6)
-    deq = {k: (hf.dequantize_int4(*hf.quantize_int4(v)) if v.ndim == 2 else v)
+    for scales in ("float32", "float16"):
+        deq = {k: (hf.dequantize_int4(*hf.quantize_int4(v, scales)) if v.ndim == 2 else v)
+               for k, v in w.items()}
+        path = convert(tmp_path, cfg, w, weights="q4", positions="all", scales=scales,
+                       name=scales)
+        s = Session(Model(lib, path=path))
+        for ids in PROMPTS:
+            got, want = prompt_logits(s, ids), forward(cfg, deq, ids)
+            close(got, want, 0.03)
+            assert (got.argmax(-1) == want.argmax(-1)).all()
+
+
+def test_q3_against_its_own_dequantised_weights(lib, tmp_path):
+    """3-bit feed-forward matrices (--q3 mlp), the rest 4-bit, float16 scales: rayo's logits
+    against the reference on the same dequantised weights."""
+    cfg = tiny_config(hidden_size=128, intermediate_size=256)
+    w = tiny_weights(cfg, seed=6)
+    deq = {k: ((hf.dequantize_int3(*hf.quantize_int3(v)) if ".mlp." in k
+                else hf.dequantize_int4(*hf.quantize_int4(v, "float16"))) if v.ndim == 2 else v)
            for k, v in w.items()}
-    path = convert(tmp_path, cfg, w, weights="q4", positions="all")
+    path = convert(tmp_path, cfg, w, weights="q4", positions="all", q3=("mlp",))
+    header = json.loads(path.read_bytes()[12: 12 + int.from_bytes(path.read_bytes()[8:12],
+                                                                    "little")])
+    kinds = {t["name"]: t["dtype"] for t in header["tensors"]}
+    assert kinds["l0.gate"] == kinds["l0.up"] == kinds["l0.down"] == "int3"
+    assert kinds["l0.q"] == kinds["embed"] == "int4"
     s = Session(Model(lib, path=path))
     for ids in PROMPTS:
         got, want = prompt_logits(s, ids), forward(cfg, deq, ids)
         close(got, want, 0.03)
-        assert (got.argmax(-1) == want.argmax(-1)).all()
+
+
+def test_int8_cache_against_float(lib, tmp_path):
+    """The int8 key/value cache: logits within 3% of the largest of the float32 cache's (on
+    these random weights, harder than trained ones), decoding token by token, and the same
+    most likely token nearly everywhere."""
+    cfg = tiny_config(hidden_size=128, intermediate_size=256)
+    w = tiny_weights(cfg, seed=8)
+    path = convert(tmp_path, cfg, w, weights="q4")
+    f = Session(Model(lib, path=path))
+    q = Session(Model(lib, path=path), cache=1)
+    agree = total = 0
+    for ids in PROMPTS:
+        for a, b in zip(decode_logits(f, ids, 2), decode_logits(q, ids, 2)):
+            close(b, a, 0.03)
+            agree += int(a.argmax() == b.argmax())
+            total += 1
+    assert agree >= total - 1
+
+
+def test_roles_and_scales_options():
+    assert hf.q3_roles("mlp_in,attn_o") == ("mlp_gate", "mlp_up", "attn_o")
+    assert hf.q3_roles(None) == ()
+    with pytest.raises(ConvertError, match="--q3"):
+        hf.q3_roles("lm_heads")
+    rng = np.random.default_rng(1)
+    w = (0.02 * rng.standard_normal((8, 64))).astype(np.float32)
+    q, s = hf.quantize_int4(w, "float16")
+    assert s.dtype == np.float16
+    with pytest.raises(ConvertError, match="float16"):
+        hf.quantize_int4(w * 1e7, "float16")
+
+
+def test_int3_layout():
+    rng = np.random.default_rng(2)
+    w = rng.standard_normal((3, 64)).astype(np.float32)
+    q, s = hf.quantize_int3(w)
+    assert q.shape == (3, 24) and s.shape == (3, 2)
+    d = hf.dequantize_int3(q, s)
+    assert np.all(np.abs(d - w) <= np.abs(s.astype(np.float32)).repeat(32, axis=1) * 2.5)
+    # Value i of a group: the low two bits in byte i % 8 at 2 * (i // 8), the third in bit i
+    # of the word at bytes 8 to 11.
+    u = np.clip(np.round(w[0, :32] / s[0, 0].astype(np.float32)), -4, 3).astype(int) + 4
+    word = int.from_bytes(q[0, 8:12].tobytes(), "little")
+    for i in (0, 5, 13, 22, 31):
+        assert ((q[0, i % 8] >> (2 * (i // 8))) & 3) | (((word >> i) & 1) << 2) == u[i]
+    # Better than the largest value setting the scale alone.
+    top = np.take_along_axis(w.reshape(3, 2, 32), np.abs(w.reshape(3, 2, 32)).argmax(2)[..., None],
+                             2)
+    naive = np.clip(np.round(w.reshape(3, 2, 32) / (top / -4)), -4, 3) * (top / -4)
+    assert ((d - w) ** 2).sum() <= ((naive.reshape(3, 64) - w) ** 2).sum()
+
+
+def test_tokenizer_table_in_the_file(lib, tmp_path):
+    """The converted file holds the tokeniser's table before the tensors; rayo reads it from
+    the mapped file, and a file converted without one still loads."""
+    from rayo_convert import tokenizer_table
+
+    cfg = tiny_config()
+    w = tiny_weights(cfg, seed=9)
+    tok = {"added_tokens": [], "normalizer": None,
+           "pre_tokenizer": {"type": "ByteLevel", "add_prefix_space": False, "use_regex": True},
+           "decoder": {"type": "ByteLevel"},
+           "model": {"type": "BPE", "vocab": {chr(c): i for i, c in enumerate(range(97, 123))},
+                     "merges": []}}
+    d = write_model(tmp_path / "t-src", cfg, w, extra={"tokenizer.json": tok})
+    out = tmp_path / "t.weights"
+    hf.convert_dir(d, out, hf.HfOptions(weights="q4"))
+    raw = out.read_bytes()
+    header = json.loads(raw[12: 12 + int.from_bytes(raw[8:12], "little")])
+    start = 12 + int.from_bytes(raw[8:12], "little")
+    t = header["tokenizer"]
+    assert t["offset"] == 0 and raw[start: start + 4] == b"RTOK"
+    assert raw[start: start + t["bytes"]] == tokenizer_table.table(tok)
+    assert min(x["offset"] for x in header["tensors"]) >= t["bytes"]
+    Session(Model(lib, path=out))
+    hf.convert_dir(d, out, hf.HfOptions(weights="q4", tokenizer_table=False))
+    assert "tokenizer" not in json.loads(out.read_bytes()[12: 12 + int.from_bytes(
+        out.read_bytes()[8:12], "little")])
 
 
 def test_int4_layout():

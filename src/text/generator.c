@@ -78,8 +78,9 @@ rayo_status rayo_generator_create(const rayo_model *model, const rayo_tokenizer 
                                   rayo_message *msg) {
   rayo_generator *g;
   rayo_session_options so;
+  rayo_symbol_limit limits[2];
   rayo_tensor_view in, logits;
-  rayo_i32 t, p;
+  rayo_i32 t, p, most;
   rayo_status s;
   if (!model || !tokenizer || !out) {
     return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "null argument");
@@ -98,11 +99,29 @@ rayo_status rayo_generator_create(const rayo_model *model, const rayo_tokenizer 
   g->model = model;
   g->tokenizer = tokenizer;
   if (options) g->o = *options;
-  g->chunk = model->graph.symbol_max[t];
-  g->context = model->graph.symbol_max[p] + 1;
+  /* The model's longest, lowered to the options' (or the defaults). */
+  most = model->graph.symbol_max[t];
+  g->chunk = g->o.chunk > 0 ? g->o.chunk : RAYO_GENERATOR_CHUNK;
+  if (g->chunk > most) g->chunk = most;
+  most = model->graph.symbol_max[p] + 1;
+  g->context = g->o.context > 0 ? g->o.context : RAYO_GENERATOR_CONTEXT;
+  if (g->context > most) g->context = most;
+  if (g->chunk > g->context) g->chunk = g->context;
   g->pending = -1;
   memset(&so, 0, sizeof so);
   so.threads = g->o.threads;
+  so.cache = g->o.cache;
+  /* The cache holds `context` rows; memory is planned for a full chunk at
+   * its end. */
+  so.state_rows = g->context;
+  limits[0].name = "T";
+  limits[0].max = g->chunk;
+  limits[0].plan = g->chunk;
+  limits[1].name = "P";
+  limits[1].max = g->context - 1;
+  limits[1].plan = g->context - g->chunk;
+  so.limits = limits;
+  so.limit_count = 2;
   s = rayo_session_create_with(model, &so, &g->session, msg);
   if (s == RAYO_OK) s = read_metadata(g, msg);
   if (s == RAYO_OK) {

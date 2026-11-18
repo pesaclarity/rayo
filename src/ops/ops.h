@@ -47,4 +47,8 @@ extern const rayo_op rayo_op_rms_norm;      /* ops/decoder.c */
 extern const rayo_op rayo_op_rope;          /* ops/decoder.c */
 extern const rayo_op rayo_op_swiglu;        /* ops/decoder.c */
 
+/* An attention node's kv_heads, from its params (a session sizes an int8
+ * cache's groups by it). */
+rayo_i32 rayo_attention_kv_heads(const void *params);
+
 #endif

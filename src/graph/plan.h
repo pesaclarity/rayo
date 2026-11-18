@@ -17,6 +17,12 @@ typedef struct rayo_values {
   rayo_tensor *states;
   rayo_tensor *nodes;
   rayo_tensor *args; /* the graph's max_node_inputs: one node's inputs at a time */
+  /* A session's own sizes for the states, or NULL for the graph's: each
+   * state's first dimension at most state_rows[i] (0: as declared), and
+   * int8 with scales in groups of state_group[i] instead of float32 (0:
+   * float32). The scales' memory is set by the session. */
+  const rayo_i32 *state_rows;
+  const rayo_i32 *state_group;
 } rayo_values;
 
 typedef struct rayo_plan {

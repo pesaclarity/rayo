@@ -1,10 +1,13 @@
 /* slm_bench: a decoder's speed and memory: a prompt of P random tokens (in
- * the model's chunks), then D tokens decoded greedily one at a time, with
- * the model mapped from its file.
+ * chunks), then D tokens decoded greedily one at a time, with the model
+ * mapped from its file, sized as a generator sizes it.
  *
- *   slm_bench MODEL.weights [P] [D] [threads]
+ *   slm_bench MODEL.weights [P] [D] [threads] [--kv int8|float32]
+ *             [--context N] [--chunk N] [--access normal|sequential|willneed|random]
  *
- * Prints prompt and decode tokens a second and the peak resident memory. */
+ * --context (default 1024) and --chunk (default 32) are at most the
+ * model's. Prints prompt and decode tokens a second, the peak private
+ * memory (the process's own) and mapped-file memory, and the peak RSS. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +39,16 @@ static rayo_i32 argmax(const float *v, rayo_i32 n) {
   return best;
 }
 
+static rayo_process_memory_info peak;
+
+static void sample(void) {
+  rayo_process_memory_info m;
+  if (rayo_process_memory(&m) != RAYO_OK) return;
+  if (m.private_bytes > peak.private_bytes) peak.private_bytes = m.private_bytes;
+  if (m.file_bytes > peak.file_bytes) peak.file_bytes = m.file_bytes;
+  if (m.resident_bytes > peak.resident_bytes) peak.resident_bytes = m.resident_bytes;
+}
+
 static int step(rayo_session *s, const rayo_i32 *ids, rayo_i32 p, rayo_i32 t) {
   rayo_tensor_view in;
   rayo_message msg;
@@ -50,6 +63,7 @@ static int step(rayo_session *s, const rayo_i32 *ids, rayo_i32 p, rayo_i32 t) {
     fprintf(stderr, "run: %s\n", msg.text);
     return 0;
   }
+  sample();
   return 1;
 }
 
@@ -57,28 +71,81 @@ int main(int argc, char **argv) {
   rayo_model *m = NULL;
   rayo_session *s = NULL;
   rayo_session_options o;
+  rayo_model_options mo;
+  rayo_symbol_limit limits[2];
   rayo_tensor_view out, in;
   rayo_message msg;
   rayo_memory_info mem;
-  rayo_i32 prompt = argc > 2 ? atoi(argv[2]) : 128, decode = argc > 3 ? atoi(argv[3]) : 64;
-  rayo_i32 chunk, vocab, i, at = 0, *ids;
+  rayo_i32 num[4] = {0, 128, 64, 1};
+  rayo_i32 prompt, decode, chunk = 32, context = 1024, vocab, i, at = 0, *ids;
+  int a, positional = 0;
+  const char *path = NULL;
   double t0, t_load, t_prompt, t_decode, rss_load;
-  if (argc < 2) {
-    fprintf(stderr, "usage: slm_bench MODEL.weights [prompt] [decode] [threads]\n");
+  memset(&o, 0, sizeof o);
+  memset(&mo, 0, sizeof mo);
+  for (a = 1; a < argc; a++) {
+    if (strcmp(argv[a], "--kv") == 0 && a + 1 < argc) {
+      o.cache = strcmp(argv[++a], "int8") == 0 ? RAYO_CACHE_INT8 : RAYO_CACHE_FLOAT32;
+    } else if (strcmp(argv[a], "--context") == 0 && a + 1 < argc) {
+      context = atoi(argv[++a]);
+    } else if (strcmp(argv[a], "--chunk") == 0 && a + 1 < argc) {
+      chunk = atoi(argv[++a]);
+    } else if (strcmp(argv[a], "--access") == 0 && a + 1 < argc) {
+      const char *v = argv[++a];
+      mo.access = strcmp(v, "normal") == 0       ? RAYO_ACCESS_NORMAL
+                  : strcmp(v, "sequential") == 0 ? RAYO_ACCESS_SEQUENTIAL
+                  : strcmp(v, "willneed") == 0   ? RAYO_ACCESS_WILLNEED
+                  : strcmp(v, "random") == 0     ? RAYO_ACCESS_RANDOM
+                                                 : RAYO_ACCESS_DEFAULT;
+    } else if (!path) {
+      path = argv[a];
+    } else if (positional < 3) {
+      num[1 + positional++] = atoi(argv[a]);
+    }
+  }
+  if (!path) {
+    fprintf(stderr,
+            "usage: slm_bench MODEL.weights [prompt] [decode] [threads] [--kv int8|float32] "
+            "[--context N] [--chunk N] [--access normal|sequential|willneed|random]\n");
     return 2;
   }
-  memset(&o, 0, sizeof o);
-  o.threads = argc > 4 ? atoi(argv[4]) : 1;
+  prompt = num[1];
+  decode = num[2];
+  o.threads = num[3];
   t0 = bench_now_ms();
-  if (rayo_model_load(argv[1], NULL, &m, &msg) != RAYO_OK ||
-      rayo_session_create_with(m, &o, &s, &msg) != RAYO_OK) {
+  if (rayo_model_load(path, &mo, &m, &msg) != RAYO_OK) {
+    fprintf(stderr, "slm_bench: %s\n", msg.text);
+    return 1;
+  }
+  /* As a generator sizes its session: the cache for `context` tokens, the
+   * working memory for a chunk at its end. */
+  rayo_model_input_info(m, 0, &in);
+  if (chunk > in.shape.dims[0]) chunk = in.shape.dims[0];
+  for (i = 0; i < m->graph.symbol_count; i++) {
+    if (strcmp(m->graph.symbols[i], "P") == 0 && context > m->graph.symbol_max[i] + 1) {
+      context = m->graph.symbol_max[i] + 1;
+    }
+  }
+  if (prompt + decode > context) {
+    fprintf(stderr, "slm_bench: %ld tokens do not fit a context of %ld\n", (long)(prompt + decode),
+            (long)context);
+    return 2;
+  }
+  o.state_rows = context;
+  limits[0].name = "T";
+  limits[0].max = limits[0].plan = chunk;
+  limits[1].name = "P";
+  limits[1].max = context - 1;
+  limits[1].plan = context - chunk;
+  o.limits = limits;
+  o.limit_count = 2;
+  if (rayo_session_create_with(m, &o, &s, &msg) != RAYO_OK) {
     fprintf(stderr, "slm_bench: %s\n", msg.text);
     return 1;
   }
   t_load = bench_now_ms() - t0;
   rss_load = peak_mb();
-  rayo_model_input_info(m, 0, &in);
-  chunk = in.shape.dims[0];
+  sample();
   rayo_session_output(s, 0, &out);
   vocab = out.shape.dims[0];
   ids = malloc((size_t)(prompt + decode + 1) * sizeof *ids);
@@ -115,11 +182,15 @@ int main(int argc, char **argv) {
   }
   rayo_session_memory(s, &mem);
   printf(
-      "%s threads=%d kernels=%s load_ms=%.0f prompt=%ld prompt_tok_s=%.1f decode=%ld "
-      "decode_tok_s=%.2f file_mb=%.1f arena_mb=%.1f rss_after_load_mb=%.1f peak_rss_mb=%.1f\n",
-      rayo_model_name(m), rayo_session_threads(s), rayo_session_kernels(s), t_load, (long)prompt,
-      prompt * 1000.0 / t_prompt, (long)decode, decode * 1000.0 / t_decode,
-      (double)mem.weights / 1048576.0, (double)mem.arena / 1048576.0, rss_load, peak_mb());
+      "%s threads=%d kernels=%s kv=%s context=%ld chunk=%ld load_ms=%.0f prompt=%ld "
+      "prompt_tok_s=%.1f decode=%ld decode_tok_s=%.2f file_mb=%.1f arena_mb=%.1f "
+      "rss_after_load_mb=%.1f peak_private_mb=%.1f peak_file_resident_mb=%.1f "
+      "peak_rss_mb=%.1f\n",
+      rayo_model_name(m), rayo_session_threads(s), rayo_session_kernels(s),
+      o.cache == RAYO_CACHE_INT8 ? "int8" : "float32", (long)context, (long)chunk, t_load,
+      (long)prompt, prompt * 1000.0 / t_prompt, (long)decode, decode * 1000.0 / t_decode,
+      (double)mem.weights / 1048576.0, (double)mem.arena / 1048576.0, rss_load,
+      (double)peak.private_bytes / 1048576.0, (double)peak.file_bytes / 1048576.0, peak_mb());
   free(ids);
   rayo_session_destroy(s);
   rayo_model_destroy(m);

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kernels/half.h"
 #include "kernels/kernels.h"
 #include "test.h"
 
@@ -84,31 +85,59 @@ static void check_i8(rayo_gemm_i8_fn *fn, rayo_i32 a_offset, const char *name) {
   free(got);
 }
 
-/* A Q4 product against double maths on the dequantised values, and the
+/* Value e of a group of `bits` (4 or 3) weights, as docs/FORMAT.md
+ * describes them. */
+static int group_value(const rayo_u8 *g, int bits, size_t e) {
+  if (bits == 4) return (e < 16 ? g[e] & 15 : g[e - 16] >> 4) - 8;
+  return (int)((g[e % 8] >> (2 * (e / 8))) & 3) + 4 * ((g[8 + e / 8] >> (e % 8)) & 1) - 4;
+}
+
+/* float16 to double, from the definition. */
+static double half_value(rayo_u16 h) {
+  const int e = (h >> 10) & 31, m = h & 1023;
+  const double v = e == 0 ? ldexp((double)m, -24) : ldexp(1024.0 + m, e - 25);
+  return (h >> 15) ? -v : v;
+}
+
+/* A product of group-wise weights (`bits` 4 or 3, scales float32 or, with
+ * `half`, float16) against double maths on the dequantised values, and the
  * kernel against the generic one, bit for bit. */
-static void check_q4(rayo_gemm_q4_fn *fn, const char *name) {
-  enum { M = 3, N = 7, K = 96, G = K / RAYO_Q4_GROUP };
-  float x[M * K], ascale[M * G], wscale[N * G], want[M * N], got[M * N];
-  rayo_i8 q[M * K];
-  rayo_u8 w[N * K / 2];
+static void check_q(rayo_gemm_q4_fn *fn, int bits, rayo_bool half, size_t K, const char *name) {
+  enum { M = 3, N = 7, KMAX = 608, GMAX = KMAX / RAYO_Q4_GROUP };
+  const size_t gb = bits == 4 ? RAYO_Q4_GROUP_BYTES : RAYO_Q3_GROUP_BYTES;
+  const size_t G = K / RAYO_Q4_GROUP;
+  static float x[M * KMAX], ascale[M * GMAX], wscale[N * GMAX], want[M * N], got[M * N];
+  static rayo_u16 wscale16[N * GMAX];
+  static rayo_i8 q[M * KMAX];
+  static rayo_u8 w[N * GMAX * RAYO_Q4_GROUP_BYTES];
+  const void *ws = half ? (const void *)wscale16 : (const void *)wscale;
+  rayo_gemm_q4_fn *generic = bits == 4 ? rayo_gemm_q4_generic : rayo_gemm_q3_generic;
   int same = 1, close = 1;
   size_t i, j, p;
   for (i = 0; i < M * K; i++) x[i] = uniform();
   x[5] = 0.0f;
-  for (i = 0; i < N * K / 2; i++) w[i] = (rayo_u8)(next() % 256u);
-  for (i = 0; i < N * G; i++) wscale[i] = 0.01f + 0.1f * (uniform() + 1.0f);
+  for (i = 0; i < sizeof w; i++) w[i] = (rayo_u8)(next() % 256u);
+  for (i = 0; i < N * G; i++) {
+    wscale[i] = 0.01f + 0.1f * (uniform() + 1.0f);
+    /* Normal float16 values of 2^-10 to 2^-1, either sign, and a subnormal. */
+    wscale16[i] = (rayo_u16)((next() % 2u) << 15 | (5u + next() % 9u) << 10 | next() % 1024u);
+  }
+  wscale16[3] = 0x0123; /* subnormal ones, in a block of eight and in the tail */
+  wscale16[N * G - 1] = 0x8007;
+  wscale16[10 % (N * G)] = 0x0000;
   rayo_quantize_groups(x, M, K, q, ascale);
-  rayo_gemm_q4_generic(q, ascale, M, w, wscale, N, K, want, N);
-  fn(q, ascale, M, w, wscale, N, K, got, N);
+  generic(q, ascale, M, w, ws, half, N, K, want, N);
+  fn(q, ascale, M, w, ws, half, N, K, got, N);
   for (i = 0; i < M; i++) {
     for (j = 0; j < N; j++) {
       double ref = 0.0;
       for (p = 0; p < K; p++) {
-        const rayo_u8 b = w[j * K / 2 + p / 32 * 16 + p % 16];
-        const int v = (p % 32 < 16 ? b & 15 : b >> 4) - 8;
-        ref += (double)q[i * K + p] * ascale[i * G + p / 32] * v * wscale[j * G + p / 32];
+        const size_t g = j * G + p / 32;
+        const int v = group_value(w + g * gb, bits, p % 32);
+        const double sc = half ? half_value(wscale16[g]) : (double)wscale[g];
+        ref += (double)q[i * K + p] * ascale[i * G + p / 32] * v * sc;
       }
-      close &= fabs(ref - want[i * N + j]) < 1e-4;
+      close &= fabs(ref - want[i * N + j]) < 1e-4 * (1.0 + fabs(ref));
 #if defined(__arm__)
       /* armv7 NEON flushes denormals: allow the last bits. */
       same &= fabs(got[i * N + j] - want[i * N + j]) <= 1e-6 * (1.0 + fabs(want[i * N + j]));
@@ -121,9 +150,35 @@ static void check_q4(rayo_gemm_q4_fn *fn, const char *name) {
   for (i = 0; i < M * K; i++)
     close &= fabs(q[i] * ascale[i / 32] - x[i]) <= ascale[i / 32] * 0.5001;
   EXPECT(ascale[0] > 0.0f);
-  printf("  q4 kernel %s: %s\n", name, same ? "same as generic" : "DIFFERS from generic");
+  printf("  q%d kernel %s, %s scales, k %lu: %s\n", bits, name, half ? "float16" : "float32",
+         (unsigned long)K, same ? "same as generic" : "DIFFERS from generic");
   EXPECT(close);
   EXPECT(same);
+}
+
+static void check_q4(rayo_gemm_q4_fn *q4, rayo_gemm_q4_fn *q3, const char *name) {
+  size_t k;
+  for (k = 96; k <= 608; k += 512) {
+    check_q(q4, 4, RAYO_FALSE, k, name);
+    check_q(q4, 4, RAYO_TRUE, k, name);
+    check_q(q3, 3, RAYO_FALSE, k, name);
+    check_q(q3, 3, RAYO_TRUE, k, name);
+  }
+}
+
+/* Every float16 but infinities and NaNs converts exactly. */
+static void check_half(void) {
+  const rayo_u16 one = 0x3c00;
+  const float two = 2.0f;
+  rayo_u32 h;
+  int exact = 1;
+  for (h = 0; h < 65536u; h++) {
+    if (((h >> 10) & 31u) == 31u) continue;
+    exact &= (double)rayo_half_to_float((rayo_u16)h) == half_value((rayo_u16)h);
+  }
+  EXPECT(exact);
+  EXPECT(rayo_group_scale(&one, RAYO_TRUE, 0) == 1.0f);
+  EXPECT(rayo_group_scale(&two, RAYO_FALSE, 0) == 2.0f);
 }
 
 void test_kernels(void) {
@@ -136,17 +191,18 @@ void test_kernels(void) {
   printf("  kernels: build %s, best here %s\n", simd.name, best.name);
   check_i8(simd.gemm_i8, simd.a_offset, simd.name);
   check_i8(best.gemm_i8, best.a_offset, best.name);
-  check_q4(simd.gemm_q4, simd.name);
-  check_q4(best.gemm_q4, best.name);
+  check_half();
+  check_q4(simd.gemm_q4, simd.gemm_q3, simd.name);
+  check_q4(best.gemm_q4, best.gemm_q3, best.name);
 #if defined(RAYO_KERNELS_X86_VNNI)
   /* Each x86 set this CPU runs, whatever the build targets. */
   if (rayo_cpu_has_sse41()) {
     check_i8(rayo_gemm_i8_sse41, 0, "sse4.1 (run time)");
-    check_q4(rayo_gemm_q4_sse41, "sse4.1 (run time)");
+    check_q4(rayo_gemm_q4_sse41, rayo_gemm_q3_sse41, "sse4.1 (run time)");
   }
   if (rayo_cpu_has_avx2()) {
     check_i8(rayo_gemm_i8_avx2, 0, "avx2 (run time)");
-    check_q4(rayo_gemm_q4_avx2, "avx2 (run time)");
+    check_q4(rayo_gemm_q4_avx2, rayo_gemm_q3_avx2, "avx2 (run time)");
   }
 #endif
 #if defined(RAYO_KERNELS_X86_VNNI)

@@ -8,6 +8,7 @@ void rayo_kernels_generic(rayo_kernels *out) {
   out->gemm_i8 = rayo_gemm_i8_generic;
   out->gemm_f32 = rayo_gemm_f32_generic;
   out->gemm_q4 = rayo_gemm_q4_generic;
+  out->gemm_q3 = rayo_gemm_q3_generic;
 }
 
 void rayo_kernels_simd(rayo_kernels *out) {
@@ -16,14 +17,17 @@ void rayo_kernels_simd(rayo_kernels *out) {
   out->name = "avx2";
   out->gemm_i8 = rayo_gemm_i8_avx2;
   out->gemm_q4 = rayo_gemm_q4_avx2;
+  out->gemm_q3 = rayo_gemm_q3_avx2;
 #elif defined(__SSE4_1__) && defined(RAYO_KERNELS_X86_SIMD)
   out->name = "sse4.1";
   out->gemm_i8 = rayo_gemm_i8_sse41;
   out->gemm_q4 = rayo_gemm_q4_sse41;
+  out->gemm_q3 = rayo_gemm_q3_sse41;
 #elif defined(RAYO_KERNELS_NEON)
   out->name = "neon";
   out->gemm_i8 = rayo_gemm_i8_neon;
   out->gemm_q4 = rayo_gemm_q4_neon;
+  out->gemm_q3 = rayo_gemm_q3_neon;
 #endif
 }
 
@@ -36,12 +40,14 @@ void rayo_kernels_best(rayo_kernels *out) {
       out->name = "sse4.1";
       out->gemm_i8 = rayo_gemm_i8_sse41;
       out->gemm_q4 = rayo_gemm_q4_sse41;
+      out->gemm_q3 = rayo_gemm_q3_sse41;
     }
   }
   if (out->gemm_q4 != rayo_gemm_q4_avx2 && rayo_cpu_has_avx2()) {
     out->name = "avx2";
     out->gemm_i8 = rayo_gemm_i8_avx2;
     out->gemm_q4 = rayo_gemm_q4_avx2;
+    out->gemm_q3 = rayo_gemm_q3_avx2;
   }
   if (rayo_cpu_has_avxvnni()) {
     out->name = "avx-vnni";
@@ -54,6 +60,7 @@ void rayo_kernels_best(rayo_kernels *out) {
     out->name = "neon-dotprod";
     out->gemm_i8 = rayo_gemm_i8_neon_dotprod;
     out->gemm_q4 = rayo_gemm_q4_neon_dotprod;
+    out->gemm_q3 = rayo_gemm_q3_neon_dotprod;
   }
 #endif
 }

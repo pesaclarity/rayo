@@ -34,11 +34,16 @@ class _Message(C.Structure):
 
 
 class _ModelOptions(C.Structure):
-    _fields_ = [("ops", C.c_void_p), ("op_count", C.c_int), ("read_file", C.c_int)]
+    _fields_ = [("ops", C.c_void_p), ("op_count", C.c_int), ("read_file", C.c_int),
+                ("access", C.c_int)]
 
 
 class _SessionOptions(C.Structure):
-    _fields_ = [("threads", C.c_int)]
+    _fields_ = [("threads", C.c_int), ("cache", C.c_int), ("state_rows", C.c_int32),
+                ("limits", C.c_void_p), ("limit_count", C.c_int)]
+
+
+CACHE_FLOAT32, CACHE_INT8 = 0, 1
 
 
 class RayoError(RuntimeError):
@@ -86,6 +91,10 @@ class Library:
         L.rayo_tokenizer_piece.argtypes = [C.c_void_p, C.c_int32, C.POINTER(C.c_size_t)]
         L.rayo_tokenizer_piece.restype = C.c_void_p
         L.rayo_tokenizer_destroy.argtypes = [C.c_void_p]
+        L.rayo_tokenizer_create_table.argtypes = [C.c_void_p, C.c_size_t, C.POINTER(C.c_void_p),
+                                                  C.POINTER(_Message)]
+        L.rayo_tokenizer_table.argtypes = [C.c_void_p, C.POINTER(C.c_void_p),
+                                           C.POINTER(C.c_size_t)]
         L.rayo_tokenizer_vocab_size.argtypes = [C.c_void_p]
 
     @classmethod
@@ -116,7 +125,7 @@ class Model:
         self.ptr = C.c_void_p()
         msg = _Message()
         if path is not None:
-            opts = _ModelOptions(None, 0, int(read_file))
+            opts = _ModelOptions(None, 0, int(read_file), 0)
             s = lib.lib.rayo_model_load(str(path).encode(), C.byref(opts), C.byref(self.ptr),
                                         C.byref(msg))
         else:
@@ -137,12 +146,12 @@ class Model:
 
 
 class Session:
-    def __init__(self, model: Model, threads: int = 1) -> None:
+    def __init__(self, model: Model, threads: int = 1, cache: int = CACHE_FLOAT32) -> None:
         self.model = model
         self.L = model.lib.lib
         self.ptr = C.c_void_p()
         msg = _Message()
-        opts = _SessionOptions(threads)
+        opts = _SessionOptions(threads, cache, 0, None, 0)
         if self.L.rayo_session_create_with(model.ptr, C.byref(opts), C.byref(self.ptr),
                                            C.byref(msg)) != 0:
             raise RayoError(msg.text.decode())
@@ -194,15 +203,33 @@ class Session:
 
 
 class Tokenizer:
-    """rayo's tokeniser of a tokenizer.json."""
+    """rayo's tokeniser of a tokenizer.json, or (with ``table``) of a tokeniser table
+    (rayo_convert.tokenizer_table), read in place."""
 
-    def __init__(self, lib: Library, json_bytes: bytes) -> None:
+    def __init__(self, lib: Library, json_bytes: bytes | None = None,
+                 table: bytes | None = None) -> None:
         self.L = lib.lib
         self.ptr = C.c_void_p()
         msg = _Message()
-        if self.L.rayo_tokenizer_create(json_bytes, len(json_bytes), C.byref(self.ptr),
-                                        C.byref(msg)) != 0:
+        if table is not None:
+            # The C side reads the table where it is: keep it, 4-byte aligned.
+            self._table = (C.c_uint32 * ((len(table) + 3) // 4))()
+            C.memmove(self._table, table, len(table))
+            s = self.L.rayo_tokenizer_create_table(self._table, len(table), C.byref(self.ptr),
+                                                   C.byref(msg))
+        else:
+            assert json_bytes is not None
+            s = self.L.rayo_tokenizer_create(json_bytes, len(json_bytes), C.byref(self.ptr),
+                                             C.byref(msg))
+        if s != 0:
             raise RayoError(msg.text.decode())
+
+    def table(self) -> bytes:
+        """The tokeniser's table, as rayo holds it."""
+        p, n = C.c_void_p(), C.c_size_t()
+        if self.L.rayo_tokenizer_table(self.ptr, C.byref(p), C.byref(n)) != 0:
+            raise RayoError("no table")
+        return C.string_at(p, n.value)
 
     def encode(self, text: str) -> list[int]:
         raw = text.encode()

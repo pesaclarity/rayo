@@ -91,10 +91,18 @@ def main() -> None:
                                      "generation_config.json": {"eos_token_id": end}})
     meta = {"chat_turns": TURNS}
     expected: dict = {}
-    for weights, name in (("float32", "llama.weights"), ("q4", "llama-q4.weights")):
+    # As files were before float16 scales and tokeniser tables (both still read), then with
+    # both, and with 3-bit feed-forward matrices.
+    for weights, name, scales, q3, table in (
+            ("float32", "llama.weights", "float32", (), False),
+            ("q4", "llama-q4.weights", "float32", (), False),
+            ("q4", "llama-q4h.weights", "float16", (), True),
+            ("q4", "llama-q3.weights", "float16", hf.q3_roles("mlp"), True)):
         hf.convert_dir(work, OUT / name, hf.HfOptions(name="test-llama", weights=weights,
-                                                      chunk=16, metadata=meta))
-    (OUT / "llama-q4.tokenizer.json").unlink()
+                                                      chunk=16, metadata=meta, scales=scales,
+                                                      q3=q3, tokenizer_table=table))
+    for name in ("llama-q4", "llama-q4h", "llama-q3"):
+        (OUT / f"{name}.tokenizer.json").unlink()
     for f in work.iterdir():
         f.unlink()
     work.rmdir()
@@ -105,9 +113,17 @@ def main() -> None:
         ids.append(int(forward(cfg, w, ids)[-1].argmax()))
     deq = {k: (hf.dequantize_int4(*hf.quantize_int4(v)) if v.ndim == 2 else v)
            for k, v in w.items()}
+    deq_h = {k: (hf.dequantize_int4(*hf.quantize_int4(v, "float16")) if v.ndim == 2 else v)
+             for k, v in w.items()}
+    deq_3 = {k: ((hf.dequantize_int3(*hf.quantize_int3(v, "float16")) if ".mlp." in k
+                  else hf.dequantize_int4(*hf.quantize_int4(v, "float16")))
+                 if v.ndim == 2 else v)
+             for k, v in w.items()}
     expected = {"prompt": prompt, "greedy": ids[len(prompt):],
                 "logits": [round(float(x), 6) for x in forward(cfg, w, prompt)[-1]],
                 "logits_q4": [round(float(x), 6) for x in forward(cfg, deq, prompt)[-1]],
+                "logits_q4h": [round(float(x), 6) for x in forward(cfg, deq_h, prompt)[-1]],
+                "logits_q3": [round(float(x), 6) for x in forward(cfg, deq_3, prompt)[-1]],
                 "text": "the cat sat on the mat, hello there!", "eos": end}
     (OUT / "llama_expected.json").write_text(json.dumps(expected, indent=1) + "\n")
     print(f"wrote {OUT}/llama*")

@@ -73,13 +73,16 @@ rayo_status rayo_linear_pack(const rayo_op_spec *spec, const rayo_weight *kernel
   }
   lin->bias = b;
   if (kernel->dtype == RAYO_DTYPE_I8) return pack_i8(spec, kernel, arena, lin, msg);
-  if (kernel->dtype == RAYO_DTYPE_I4) {
+  if (kernel->dtype == RAYO_DTYPE_I4 || kernel->dtype == RAYO_DTYPE_I3) {
     if (k % RAYO_Q4_GROUP != 0 || kernel->group_size != RAYO_Q4_GROUP) {
-      return rayo_fail(msg, RAYO_ERR_UNSUPPORTED, "node %s: an int4 kernel needs groups of %d",
-                       spec->output, RAYO_Q4_GROUP);
+      return rayo_fail(msg, RAYO_ERR_UNSUPPORTED,
+                       "node %s: a 4-bit or 3-bit kernel needs groups of %d", spec->output,
+                       RAYO_Q4_GROUP);
     }
     lin->w4 = kernel->data;
-    lin->gscale = kernel->scales;
+    lin->gscale = kernel->group_scales;
+    lin->gscale_half = kernel->scales_half;
+    lin->group_bytes = kernel->dtype == RAYO_DTYPE_I4 ? RAYO_Q4_GROUP_BYTES : RAYO_Q3_GROUP_BYTES;
     return RAYO_OK;
   }
   lin->wf = kernel->data;

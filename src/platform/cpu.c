@@ -81,3 +81,12 @@ RAYO_API int rayo_cpu_fast_cores(void) {
   return 1;
 #endif
 }
+
+RAYO_API int rayo_cpu_default_threads(void) {
+  const int fast = rayo_cpu_fast_cores();
+#if defined(__ANDROID__)
+  return fast < 2 ? fast : 2;
+#else
+  return fast < 4 ? fast : 4;
+#endif
+}

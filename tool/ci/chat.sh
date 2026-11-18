@@ -23,6 +23,15 @@ for args in "--temp 0" "--temp 0.8 --seed 7 --threads 2"; do
   grep -q "reply: .* tokens/s" "$out/log.txt"
   grep -q "started again" "$out/log.txt"
 done
+# The tokeniser read from the model file's table (no tokenizer.json), 3-bit
+# weights, a short context, both caches.
+for kv in int8 float32; do
+  printf 'hello there\n/quit\n' |
+    ${RUNNER:-} examples/chat/chat tests/models/llama-q3.weights --max-tokens 6 --temp 0 \
+      --context 64 --chunk 8 --kv "$kv" >"$out/reply.txt" 2>"$out/log.txt"
+  cat "$out/log.txt"
+  grep -q "context: .* of 64 tokens" "$out/log.txt"
+done
 # One raw prompt, with the float32 model.
 ${RUNNER:-} examples/chat/chat tests/models/llama.weights -p "the cat" --max-tokens 4 --temp 0 \
   >/dev/null 2>"$out/log.txt"

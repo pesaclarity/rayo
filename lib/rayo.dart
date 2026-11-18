@@ -19,4 +19,5 @@ export 'src/library.dart'
     show rayoAvailable, rayoBuiltinOps, rayoSha256, rayoVersion;
 export 'src/model.dart' show RayoModel;
 export 'src/session.dart' show RayoSession, RayoSessionRef;
-export 'src/tensor.dart' show RayoDtype, RayoMemory, RayoTensorInfo;
+export 'src/tensor.dart'
+    show RayoDtype, RayoMemory, RayoProcessMemory, RayoTensorInfo;

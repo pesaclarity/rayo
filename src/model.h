@@ -17,7 +17,9 @@ struct rayo_model {
   rayo_arena arena;  /* owns the header, the graph and the packed weights */
   rayo_pcwt pcwt;
   rayo_graph graph;
-  const char *metadata; /* JSON text */
+  const char *metadata;     /* JSON text */
+  const rayo_u8 *tokenizer; /* the tokeniser's table in the file, or NULL */
+  size_t tokenizer_size;
 };
 
 #endif

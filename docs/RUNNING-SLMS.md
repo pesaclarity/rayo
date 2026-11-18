@@ -1,8 +1,8 @@
 # Running small language models with rayo
 
 rayo runs decoder-only language models of about 100M to 1.5B parameters on the CPU, offline:
-the weights mapped from the file in 4-bit groups, a key/value cache, a few threads on the
-fast cores. No GPU, no Google library, nothing downloaded at run time. This page goes from a
+the weights mapped from the file in 4-bit groups (some 3-bit if asked), an int8 key/value
+cache, a few threads on the fast cores. No GPU, no Google library, nothing downloaded at run time. This page goes from a
 Hugging Face model to a chat on an Android phone, then on a computer.
 
 What you need: a computer with `git`, a C compiler, `make` and Python 3.10 or later (for the
@@ -16,16 +16,18 @@ decoders):
 
 | Model | Licence | Parameters | q4 file | Memory at 2048 tokens (estimate) |
 | --- | --- | --- | --- | --- |
-| [SmolLM2-135M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct) | Apache-2.0 | 135M | 80 MB | about 95 MB in use, up to 190 MB with a full cache |
-| [SmolLM2-360M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct) | Apache-2.0 | 362M | about 226 MB (estimate) | about 260 MB, up to 420 MB (estimates) |
-| [Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct) | Apache-2.0 | 494M | 295 MB | about 310 MB, up to 360 MB |
+| [SmolLM2-135M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct) | Apache-2.0 | 135M | 80 MB | 15 MB of its own, 94 MB in all, at 1000 tokens |
+| [SmolLM2-360M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct) | Apache-2.0 | 362M | about 210 MB (estimate) | about 20 MB of its own (estimate) |
+| [Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct) | Apache-2.0 | 494M | 282 MB | 13 MB of its own, 297 MB in all, at 1000 tokens |
 
-The memory is the mapped weights the model reads (all of them, every token) plus the cache
-for the tokens so far: `2 x layers x kv_heads x head_dim x 4 bytes` a token (SmolLM2-135M:
-46 KB, Qwen2.5-0.5B: 24 KB), plus about 1 MB of working memory. The 135M and 0.5B figures were
-measured with models of their shapes and random weights (`tool/make_synthetic_slm.py`); the
-real files are the same size. A phone with 2 to 3 GB runs the first and the third; prefer
-`--context 1024` on the smallest phones.
+(The last column is the q4 file with float16 scales and the chat program's defaults: an
+int8 cache of 1024 tokens.) The memory is the mapped weights the model reads (all of them,
+every token; the system can drop and re-read them) plus the process's own: the cache for
+the tokens so far, `2 x layers x kv_heads x (head_dim + 4) bytes` a token with the int8 cache
+(SmolLM2-135M: 12.2 KB, Qwen2.5-0.5B: 6.5 KB; float32: `head_dim x 4`, 46 and 24 KB), about
+2 MB of working memory and the program. The figures were measured with models of their
+shapes and random weights (`tool/make_synthetic_slm.py`); the real files are the same size.
+A phone with 2 GB runs the first and the third.
 
 ## On an Android phone
 
@@ -37,7 +39,6 @@ kernel. It picks NEON, and the ARMv8.2 dot product (SDOT) where the CPU has it, 
 
    ```sh
    git clone https://github.com/pesaclarity/rayo.git && cd rayo
-   git checkout feat/slm-spike
    python3 -m venv .venv && . .venv/bin/activate      # or: uv venv && . .venv/bin/activate
    pip install "./convert[chat]"                       # or: uv pip install "./convert[chat]"
    ```
@@ -61,8 +62,12 @@ kernel. It picks NEON, and the ARMv8.2 dot product (SDOT) where the CPU has it, 
    rayo-convert models/src -o models/smollm2.weights --weights q4 --context 2048
    ```
 
-   This writes `models/smollm2.weights` and `models/smollm2.tokenizer.json`. The downloaded
-   files are no longer needed: `rm -r models/src`.
+   This writes `models/smollm2.weights`, with the tokeniser's table in it, and
+   `models/smollm2.tokenizer.json` (for tools; the phone does not need it). The downloaded
+   files are no longer needed: `rm -r models/src`. Options: `--scales float32` for the
+   larger float32 group scales of earlier files (the default, float16, is 4.5 bits a
+   weight); `--q3 mlp` for 3-bit feed-forward matrices (3.5 bits a weight there, a file 20%
+   smaller; its quality on real models is not measured yet, see below).
 
 4. **Build the chat program for the phone** with the NDK (`$NDK` is its directory, such as
    `~/Android/Sdk/ndk/28.2.13676358`; `HOST` is `linux-x86_64` or `darwin-x86_64`):
@@ -76,25 +81,43 @@ kernel. It picks NEON, and the ARMv8.2 dot product (SDOT) where the CPU has it, 
 5. **Copy it over and chat** (USB debugging on):
 
    ```sh
-   adb push examples/chat/chat models/smollm2.weights models/smollm2.tokenizer.json \
-     /data/local/tmp/
+   adb push examples/chat/chat models/smollm2.weights /data/local/tmp/
    adb shell
    cd /data/local/tmp && chmod +x chat && ./chat smollm2.weights
    ```
 
    Type a line and press Enter; the reply streams. `/reset` starts again, `/quit` stops, and
-   on the way out it prints the prompt and reply speeds and the peak memory.
+   on the way out it prints the prompt and reply speeds and the memory: the process's own
+   (private) and the mapped file's resident pages, which Android can drop and read again.
 
-**Threads.** By default the program runs on the phone's big cores (read from
-`/sys/devices/system/cpu/*/cpu_capacity`, or their highest clocks), at most 4: the little
-cores add little, since decoding is bound by memory bandwidth, and cost battery. On a phone
-that gets hot, or to leave room for the app, use `--threads 2`. The answer is the same with
-any number of threads, bit for bit.
+**Threads.** By default the program runs on 2 of the phone's big cores (read from
+`/sys/devices/system/cpu/*/cpu_capacity`, or their highest clocks), or 1 where there is only
+one: on a low-end phone two cores already use the memory bandwidth decoding needs, and the
+others stay free for the app and cooler (`rayo_cpu_default_threads()`). Elsewhere (Linux,
+macOS, Windows) the default is the fast cores up to 4, as before. `--threads N` sets it. The
+answer is the same with any number of threads, bit for bit.
+
+**Memory.** Two kinds count on a phone. The weights are mapped from the file, so they are
+file-backed: Android can drop their pages under pressure and read them again (slower, but
+not killed). The process's own memory (private: the key/value cache, the working memory,
+the tables) must stay. The chat program keeps the second small:
+
+- **int8 key/value cache** (`--kv int8`, the default; `--kv float32` for the float cache): a
+  scale per token and head, a quarter of the memory. For SmolLM2-135M, 12.2 KB a token
+  instead of 46 KB.
+- **The conversation's context**, 1024 tokens by default (`--context N`, at most the model's
+  `--context` from the converter). The cache is sized for this, not for the model's longest.
+- **Prompts in chunks** of 32 tokens (`--chunk N`): the working memory is the same for a
+  prompt of any length, and so are the outputs.
+- **The tokeniser's table**, read from the mapped model file: no tokenizer.json is parsed (a
+  large one took tens of MB for a moment).
+- The model file is mapped with a sequential read-ahead hint (`madvise`), measured below.
 
 **Other options:** `--temp 0` for greedy replies, `--temp`, `--top-k`, `--top-p`, `--min-p`,
 `--repeat-penalty`, `--seed`, `--max-tokens`, `--system "..."`, and `-p "text"` to continue a
-raw prompt instead of chatting. The quantisation is chosen when converting (`--weights q4`,
-`int8` or `float32`), and the longest context too (`--context`).
+raw prompt instead of chatting, `--tokenizer FILE` for a tokenizer.json instead of the table.
+The quantisation is chosen when converting (`--weights q4`, `int8` or `float32`, `--scales`,
+`--q3`), and the longest context too (`--context`).
 
 ### In an app, through Dart
 
@@ -105,8 +128,11 @@ F-Droid build has no prebuilt library) and gives the generator to Dart:
 import 'package:rayo/rayo.dart';
 
 final model = RayoModel.map('$dir/smollm2.weights');       // mapped, not copied
-final tokenizer = RayoTokenizer.load('$dir/smollm2.tokenizer.json');
+final tokenizer = RayoTokenizer.fromModel(model);          // the table in the file
 final chat = RayoGenerator(model, tokenizer, temperature: 0.7, maxTokens: 200);
+// int8 cache, 1024 tokens, chunks of 32 and 2 threads on Android by default:
+// RayoGenerator(..., context: 512, int8Cache: false, threads: 1) to change them.
+// RayoProcessMemory.now() reports private and file-backed memory.
 chat.chat('How do I save money on transport?');
 for (final piece in chat.reply()) {
   // show piece; break (or chat.cancel()) to stop early
@@ -157,18 +183,84 @@ the threads are Win32 threads.
 
 ## What to expect
 
-Measured on one 2.1 GHz Xeon core (x86_64, AVX-VNNI) with models of the real shapes and random
-weights, 128 prompt tokens then 64 decoded (`tools/slm_bench.c`). No phone has been measured
-yet: please send numbers from a real phone (`./chat` prints them on the way out).
+Measured on a 2.1 GHz Xeon (x86_64, AVX-VNNI, 4 cores shared with other work, so the speeds
+are noisy, two threads especially) with models of the real shapes, random weights and a
+synthetic tokeniser of the real vocabulary's size (`tool/make_synthetic_slm.py --tokenizer`).
+No phone has been measured yet: please send numbers from a real phone (`./chat` prints them
+on the way out). Under QEMU the chat program runs on arm64 (SDOT) and armv7 (NEON) with every
+weight type and both caches; QEMU's times are not a phone's.
+
+**A long chat** (`examples/chat`, 2 threads, 8 to 12 turns of 64-token replies until about
+1000 tokens are in the context), SmolLM2-135M shape. Private is the process's own memory at
+its peak (smaps_rollup's Anonymous); total is the peak RSS, which adds the mapped file's
+resident pages.
+
+| Weights, cache | File | Private | Total (RSS) |
+| --- | --- | --- | --- |
+| before this change: q4 float32 scales, float32 cache for 2048, tokenizer.json | 84 MB + 2 MB JSON | 62 MB | 145 MB |
+| q4 float32 scales, float32 cache (1024) | 89 MB | 46.5 MB | 133 MB |
+| q4 float32 scales, int8 cache | 89 MB | 15.1 MB | 102 MB |
+| q4 float16 scales, float32 cache | 80 MB | 46.5 MB | 125 MB |
+| **q4 float16 scales, int8 cache (the defaults)** | **80 MB** | **15.1 MB** | **94 MB** |
+| q4 and q3 (`--q3 mlp`), float16 scales, int8 cache | 70 MB | 15.1 MB | 84 MB |
+| Qwen2.5-0.5B shape, q4 float16 scales, int8 cache | 282 MB | 13.4 MB | 297 MB |
+
+The files include the tokeniser's table: 4.5 MB for a 49152-token vocabulary, 17 MB for
+Qwen2.5's 151936, read where they are. The weights alone are 84, 76 and 66 MB.
+
+**Speed** (`tools/slm_bench.c`: 128 prompt tokens, then 64 decoded; medians of five runs):
+
+| Weights, cache | Prompt tokens/s, 1 / 2 threads | Reply tokens/s, 1 / 2 threads |
+| --- | --- | --- |
+| before: q4 float32 scales, float32 cache, chunks of 64 | 128 / 96 | 37 / 30 |
+| q4 float32 scales, float32 cache | 113 / 109 | 36 / 33 |
+| q4 float32 scales, int8 cache | 100 / 124 | 34 / 32 |
+| q4 float16 scales, float32 cache | 119 / 115 | 30 / 28 |
+| q4 float16 scales, int8 cache | 101 / 112 | 30 / 29 |
+| q4 and q3, float16 scales, int8 cache | 109 / 101 | 32 / 29 |
+| Qwen2.5-0.5B shape, q4 float16 scales, int8 cache | 43 / 67 | 9.5 / 16.7 |
+
+On this x86 core, which has memory bandwidth to spare, float16 scales cost about 15% of the
+reply speed (their conversion, done a row at a time with SIMD); on a phone, where decoding
+waits on memory, their 10% smaller reads are expected to matter more. That is to be
+measured. The int8 cache costs little at these lengths.
+
+**When memory is short.** With the chat program in a memory cgroup (cgroup v1
+`memory.limit_in_bytes`, which counts the page cache) of 64 MB and of 48 MB, below the
+80 MB file, the 1000-token chat still finishes (q4 float16 scales, int8 cache): private
+memory stays at 15 MB, the system drops and re-reads the weights' pages, and replies slow
+from about 30 to 9 tokens a second. Nothing is killed. The read-ahead hints, decoding
+tokens/s with 2 threads (three runs each):
+
+| Hint | 64 MB | 48 MB |
+| --- | --- | --- |
+| none (`normal`) | 8.6, 8.4, 6.0 | 8.8, 8.6, 9.2 |
+| `sequential` | 6.6, 7.1, 6.7 | 7.7, 7.2, 7.4 |
+| `willneed` (the default) | 8.4, 8.7, 8.7 | 8.8, 7.9, 9.4 |
+
+`MADV_SEQUENTIAL` drops pages behind the reader, which a decoder reads again next token;
+`MADV_WILLNEED` reads ahead and is the steadiest, so it is the default
+(`rayo_model_options.access`). With no limit the hints change nothing measurable.
+
+**Quality.** The real weights could not be downloaded here, so quality on real models is
+not measured. On synthetic matrices (SmolLM2's 1536 x 576 feed-forward shape) the error of
+the dequantised weights against float32, as a fraction of their root mean square:
+
+| | Gaussian weights | Heavier-tailed weights (Student-t, 4 degrees) |
+| --- | --- | --- |
+| q4, float32 scales | 0.086 | 0.115 |
+| q4, float16 scales | 0.086 | 0.115 |
+| q3 (scale searched per group), float16 scales | 0.164 | 0.211 |
+
+float16 scales change nothing that matters; 3 bits double the error, so measure a real
+model's agreement with float32 before shipping `--q3`. The int8 cache keeps the tiny test
+model's logits within 1% of the float32 cache's (3% on random 128-wide weights), with the
+same most likely token.
+
+Earlier numbers (the spike, before this change; one Xeon core, 2048-token cache):
 
 | Model, weights | File | Peak memory | Prompt tokens/s (1 / 2 / 4 threads) | Reply tokens/s (1 / 2 / 4 threads) |
 | --- | --- | --- | --- | --- |
-| SmolLM2-135M shape, q4 | 80 MB | 95 MB | 129 / 175 / 211 | 41 / 74 / 52 |
 | SmolLM2-135M shape, int8 | 129 MB | 146 MB | 258 / 309 / 350 | 51 / 81 / 56 |
 | SmolLM2-135M shape, float32 | 513 MB | 528 MB | 46 / 127 / 202 | 18 / 28 / 38 |
-| Qwen2.5-0.5B shape, q4 | 295 MB | 308 MB | 48 / 76 / 115 | 12 / 21 / 30 |
 | Qwen2.5-0.5B shape, int8 | 473 MB | 491 MB | 82 / 135 / 225 | 18 / 28 / 32 |
-
-Medians of three runs (the Qwen2.5 shape: one run). On this x86 core int8 is faster than q4
-(its AVX-VNNI kernel does more per instruction), and q4 needs 40% less memory; on phones q4's
-smaller reads are expected to matter more. Four threads on this shared virtual machine are noisy; on a phone, measure 2 and 4.

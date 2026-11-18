@@ -28,12 +28,22 @@ typedef void rayo_gemm_f32_fn(const float *RAYO_RESTRICT a, size_t lda, size_t m
                               const float *RAYO_RESTRICT w, size_t ldw, size_t n, size_t k,
                               float *RAYO_RESTRICT c, size_t ldc);
 
-/* 4-bit weights, group-wise (docs/FORMAT.md, "int4"): each row of `w` is
- * k / 2 bytes, groups of RAYO_Q4_GROUP values in 16 bytes, byte j holding
- * value j of the group in its low four bits and value j + 16 in its high
- * four, each stored plus 8 (0 to 15 for -8 to 7); `wscale` has a float per
- * group, k / RAYO_Q4_GROUP per row. `a` holds the activations quantised to
- * int8 by rayo_quantize_groups (k per row, `ascale` k / RAYO_Q4_GROUP).
+/* Group-wise weights of 4 or 3 bits (docs/FORMAT.md, "int4" and "int3"),
+ * groups of RAYO_Q4_GROUP values along each row of `w`:
+ *
+ * - 4 bits: 16 bytes a group, byte j holding value j in its low four bits
+ *   and value j + 16 in its high four, each stored plus 8 (0 to 15 for -8
+ *   to 7); a row is k / 2 bytes.
+ * - 3 bits: 12 bytes a group: bytes 0 to 7 hold the low two bits, byte j
+ *   those of values j, j + 8, j + 16 and j + 24 (bits 0-1, 2-3, 4-5, 6-7);
+ *   bytes 8 to 11, read as a little-endian 32-bit word, bit i the third bit
+ *   of value i; each stored plus 4 (0 to 7 for -4 to 3); a row is k * 3 / 8
+ *   bytes.
+ *
+ * `wscale` has a scale per group, k / RAYO_Q4_GROUP per row: float32, or
+ * with `half` set IEEE float16 (rayo_u16), converted exactly. `a` holds
+ * the activations quantised to int8 by rayo_quantize_groups (k per row,
+ * `ascale` k / RAYO_Q4_GROUP).
  *
  * c[i * ldc + j] is the same in every kernel, bit for bit: per group, the
  * eight sums of four neighbouring products (exact in int32) are converted
@@ -44,13 +54,18 @@ typedef void rayo_gemm_f32_fn(const float *RAYO_RESTRICT a, size_t lda, size_t m
 #define RAYO_Q4_GROUP 32
 
 typedef void rayo_gemm_q4_fn(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale,
-                             size_t m, const rayo_u8 *RAYO_RESTRICT w,
-                             const float *RAYO_RESTRICT wscale, size_t n, size_t k,
-                             float *RAYO_RESTRICT c, size_t ldc);
+                             size_t m, const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
+                             rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
+                             size_t ldc);
+
+/* Bytes of a group of 4-bit and of 3-bit weights. */
+#define RAYO_Q4_GROUP_BYTES 16
+#define RAYO_Q3_GROUP_BYTES 12
 
 rayo_gemm_i8_fn rayo_gemm_i8_generic;
 rayo_gemm_f32_fn rayo_gemm_f32_generic;
 rayo_gemm_q4_fn rayo_gemm_q4_generic;
+rayo_gemm_q4_fn rayo_gemm_q3_generic;
 
 /* The eight lanes added in the order every Q4 kernel uses. */
 float rayo_q4_lanes_sum(const float *lanes);
@@ -64,10 +79,12 @@ float rayo_q4_lanes_sum(const float *lanes);
 #define RAYO_KERNELS_X86_SIMD 1
 rayo_gemm_i8_fn rayo_gemm_i8_sse41;
 rayo_gemm_q4_fn rayo_gemm_q4_sse41;
+rayo_gemm_q4_fn rayo_gemm_q3_sse41;
 #if defined(__AVX2__) || defined(__GNUC__) || defined(__clang__)
 #define RAYO_KERNELS_X86_AVX2 1
 rayo_gemm_i8_fn rayo_gemm_i8_avx2;
 rayo_gemm_q4_fn rayo_gemm_q4_avx2;
+rayo_gemm_q4_fn rayo_gemm_q3_avx2;
 #endif
 #endif
 #if defined(__GNUC__) || defined(__clang__)
@@ -89,11 +106,13 @@ rayo_bool rayo_cpu_has_avxvnni(void);
 /* neon.c: ARMv8.0 / ARMv7 NEON. */
 rayo_gemm_i8_fn rayo_gemm_i8_neon;
 rayo_gemm_q4_fn rayo_gemm_q4_neon;
+rayo_gemm_q4_fn rayo_gemm_q3_neon;
 #if defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))
 #define RAYO_KERNELS_NEON_DOTPROD 1
 /* neon_dotprod.c: SDOT (ARMv8.2 dot product), chosen at run time. */
 rayo_gemm_i8_fn rayo_gemm_i8_neon_dotprod;
 rayo_gemm_q4_fn rayo_gemm_q4_neon_dotprod;
+rayo_gemm_q4_fn rayo_gemm_q3_neon_dotprod;
 /* Whether this CPU has the dot product (Linux and Android only, else no). */
 rayo_bool rayo_cpu_has_dotprod(void);
 #endif
@@ -110,6 +129,7 @@ typedef struct rayo_kernels {
   rayo_gemm_i8_fn *gemm_i8;
   rayo_gemm_f32_fn *gemm_f32;
   rayo_gemm_q4_fn *gemm_q4;
+  rayo_gemm_q4_fn *gemm_q3;
 } rayo_kernels;
 
 /* The portable C kernels. */
@@ -139,6 +159,10 @@ void rayo_quantize_rows(const float *RAYO_RESTRICT x, size_t width, size_t first
  * 0. Row r goes to q + r * k and scale + r * k / RAYO_Q4_GROUP. */
 void rayo_quantize_groups(const float *RAYO_RESTRICT x, size_t rows, size_t k,
                           rayo_i8 *RAYO_RESTRICT q, float *RAYO_RESTRICT scale);
+
+/* rayo_quantize_groups with groups of `group` (k a multiple of it). */
+void rayo_quantize_groups_of(const float *RAYO_RESTRICT x, size_t rows, size_t k, size_t group,
+                             rayo_i8 *RAYO_RESTRICT q, float *RAYO_RESTRICT scale);
 
 /* For kernels that read uint8: adds `offset` (128) to the first `width`
  * int8 values of each of `rows` rows of q (stride ldq), in place, by

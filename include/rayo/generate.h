@@ -22,6 +22,7 @@
 #include "rayo/error.h"
 #include "rayo/export.h"
 #include "rayo/model.h"
+#include "rayo/session.h"
 #include "rayo/text.h"
 #include "rayo/types.h"
 
@@ -36,7 +37,24 @@ typedef struct rayo_generator_options {
   rayo_sampler_options sampling; /* zeros: greedy */
   int threads;                   /* as rayo_session_options: 0 or 1 one, -1 the fast cores */
   rayo_i32 max_tokens;           /* per reply: 0 for no limit but the context */
+  /* The most tokens the conversation holds, at most the model's (its
+   * converter's --context): 0 for RAYO_GENERATOR_CONTEXT or the model's,
+   * whichever is less. The key/value cache is sized for this, not for the
+   * model's longest. */
+  rayo_i32 context;
+  /* The most prompt tokens one run takes, at most the model's: 0 for
+   * RAYO_GENERATOR_CHUNK or the model's, whichever is less. The working
+   * memory is sized for a chunk, whatever the prompt's length; the outputs
+   * do not depend on it (docs/RUNNING-SLMS.md). */
+  rayo_i32 chunk;
+  /* The key/value cache: RAYO_CACHE_FLOAT32 (0) or RAYO_CACHE_INT8, a quarter
+   * of the memory (rayo/session.h). */
+  int cache;
 } rayo_generator_options;
+
+/* The defaults of rayo_generator_options' context and chunk. */
+#define RAYO_GENERATOR_CONTEXT 1024
+#define RAYO_GENERATOR_CHUNK 32
 
 /* A generator for `model` (a decoder converted by rayo-convert) and
  * `tokenizer` (its tokenizer.json), both of which must outlive it. The stop

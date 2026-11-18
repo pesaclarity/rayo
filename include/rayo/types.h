@@ -37,13 +37,14 @@ typedef char rayo_check_u32[sizeof(rayo_u32) == 4 ? 1 : -1];
 typedef char rayo_check_f32[sizeof(rayo_f32) == 4 ? 1 : -1];
 typedef char rayo_check_char[CHAR_BIT == 8 ? 1 : -1];
 
-/* RAYO_DTYPE_I4 is for weights only: two values a byte, in groups with a
- * scale each (docs/FORMAT.md). */
+/* RAYO_DTYPE_I4 and RAYO_DTYPE_I3 are for weights only: 4 or 3 bits a
+ * value, in groups with a scale each (docs/FORMAT.md). */
 typedef enum rayo_dtype {
   RAYO_DTYPE_F32 = 0,
   RAYO_DTYPE_I32 = 1,
   RAYO_DTYPE_I8 = 2,
-  RAYO_DTYPE_I4 = 3
+  RAYO_DTYPE_I4 = 3,
+  RAYO_DTYPE_I3 = 4
 } rayo_dtype;
 
 /* Row-major (C order) dimensions, outermost first. */

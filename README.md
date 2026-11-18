@@ -20,9 +20,10 @@ offline, in the Play and the F-Droid builds alike; nothing in the library is spe
   AVX2 and AVX-VNNI on x86; NEON and the ARMv8.2 dot product (SDOT) on ARM, chosen from what
   the CPU has when the program runs ([Kernels](#kernels)). Android (arm64-v8a, armeabi-v7a,
   x86_64), Linux (x86_64, arm64, armv7) and macOS (Apple silicon, Intel) are tested in CI.
-- **int8 and int4 weights.** int8 layers run exactly as TFLite's dynamic-range kernels (the
-  Ask reader and writer give TFLite's outputs); language models' matrices in 4-bit groups of
-  32 ([docs/FORMAT.md](docs/FORMAT.md#int4-tensors)), or int8, or float32.
+- **int8, int4 and int3 weights.** int8 layers run exactly as TFLite's dynamic-range kernels
+  (the Ask reader and writer give TFLite's outputs); language models' matrices in 4-bit
+  groups of 32 with float16 scales ([docs/FORMAT.md](docs/FORMAT.md#int4-tensors)), some in
+  3-bit groups if asked, or int8, or float32.
 - **Weights mapped from the file**, not copied (mmap; `MapViewOfFile` on Windows); a plain
   C89 build (`-DRAYO_NO_PLATFORM`) reads them with fread.
 - **Zero allocations per run.** A session plans every activation into one arena when it is
@@ -38,13 +39,15 @@ offline, in the Play and the F-Droid builds alike; nothing in the library is spe
   run, naming the op and why ([docs/CONVERTING.md](docs/CONVERTING.md)).
 - **Decoding with a key/value cache.** States kept across runs and size symbols bound per
   run; the converter rewrites a causal transformer to decode token by token.
-- **Small language models.** SmolLM2, Qwen2.5 and other Llama-style decoders, with a
-  tokeniser of tokenizer.json (byte-level BPE, Unigram), a sampler (temperature, top-k,
-  top-p, min-p, repetition penalty), a generator and the model's chat template, all in C; a
-  chat example for phones and computers ([docs/RUNNING-SLMS.md](docs/RUNNING-SLMS.md)).
+- **Small language models in little memory.** SmolLM2, Qwen2.5 and other Llama-style
+  decoders, with a tokeniser of tokenizer.json (byte-level BPE, Unigram) whose table is read
+  from the mapped model file, an int8 key/value cache, a sampler (temperature, top-k, top-p,
+  min-p, repetition penalty), a generator and the model's chat template, all in C; a chat
+  example for phones and computers: SmolLM2-135M in 15 MB of its own memory at 1000 tokens
+  ([docs/RUNNING-SLMS.md](docs/RUNNING-SLMS.md)).
 - **Dart and Flutter.** `package:rayo` (FFI): models, sessions read and written in place,
   runs in another isolate, the tokeniser and the generator ([Use](#use)).
-- **Small.** The Android library is about 151 KB (arm64-v8a), 122 KB (armeabi-v7a) and 167 KB
+- **Small.** The Android library is about 171 KB (arm64-v8a), 138 KB (armeabi-v7a) and 190 KB
   (x86_64), stripped, the language-model path included (90, 69 and 98 KB before it); CI fails
   a build over 200 KB.
 
@@ -200,9 +203,10 @@ src/graph/        the graph, shapes and the memory plan
 src/ops/          one file per op family, and the registry
 src/kernels/      generic.c, x86.c (SSE4.1/AVX2), x86_vnni.c, neon.c, neon_dotprod.c,
                   quantize.c, select.c (which kernels this CPU runs)
-src/platform/     mapped files, threads and the CPU's fast cores (POSIX, Win32, or C89)
-src/text/         the tokeniser (tokenizer.json), its patterns and Unicode tables, the
-                  sampler and the generator
+src/platform/     mapped files and their hints, page memory, threads, the CPU's fast cores,
+                  the process's memory (POSIX, Win32, or C89)
+src/text/         the tokeniser (its table, read in place or built from tokenizer.json), its
+                  patterns and Unicode tables, the sampler and the generator
 src/model.c, src/session.c, src/sha256/
 lib/              the Dart API: bindings/, model.dart, session.dart, isolate_runner.dart, ...
 tests/            the C tests (tests/test_*.c), test models, and the real Ask models (tests/ask,

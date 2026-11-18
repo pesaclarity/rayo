@@ -85,7 +85,16 @@ rayo_status rayo_graph_shapes(const rayo_graph *graph, const rayo_pcwt *weights,
     }
   }
   for (i = 0; i < graph->state_count; i++) {
-    decl_shape(&graph->states[i], symbols, &values->states[i]);
+    rayo_tensor *st = &values->states[i];
+    decl_shape(&graph->states[i], symbols, st);
+    if (values->state_rows && values->state_rows[i] > 0 && st->shape.rank >= 1 &&
+        st->shape.dims[0] > values->state_rows[i]) {
+      st->shape.dims[0] = values->state_rows[i];
+    }
+    if (values->state_group && values->state_group[i] > 0) {
+      st->dtype = RAYO_DTYPE_I8;
+      st->group = values->state_group[i];
+    }
     if (!fits(&values->states[i].shape)) {
       return rayo_fail(msg, RAYO_ERR_SHAPE, "state %s is too large", graph->states[i].name);
     }
@@ -161,7 +170,7 @@ static size_t sum_fixed(const rayo_tensor *tensors, rayo_i32 count, size_t *offs
   rayo_i32 i;
   for (i = 0; i < count; i++) {
     offsets[i] = base;
-    base += rayo_align_up(rayo_tensor_bytes(&tensors[i]));
+    base += rayo_align_up(rayo_tensor_storage(&tensors[i]));
   }
   return base;
 }
