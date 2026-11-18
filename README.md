@@ -7,34 +7,36 @@ Written by CI after every push to `main` ([`.github/workflows/ci.yml`](https://g
   <img alt="rayo benchmarks" src="table-light.png">
 </picture>
 
-## Latest: 2026-11-18, [`ec33200`](https://github.com/pesaclarity/rayo/commit/ec33200d47f454eb128cd5ddf9ed00658af16f87)
+## Latest: 2026-11-18, [`cdd7f55`](https://github.com/pesaclarity/rayo/commit/cdd7f559b6cfe88fa917d4760bebca9bdc5dad37)
 
 | | **x86_64**<br>ubuntu-24.04, 4 vCPU | **arm64**<br>ubuntu-24.04-arm, 4 vCPU |
 | --- | --- | --- |
 | **Machine** | | |
-| CPU | AMD EPYC 7763 64-Core | Neoverse-N2 |
-| Kernels chosen at run time | avx2 | neon-dotprod |
+| CPU | AMD EPYC 9V74 80-Core | Neoverse-N2 |
+| Kernels chosen at run time | avx2 | neon-i8mm |
 | **Pesa Clarity's Ask models · int8 · 1 thread · median** | | |
-| Reader, per question | 0.29 ms | 0.28 ms |
-| Writer, per reply (≈13 tokens) | 0.84 ms | 0.82 ms |
+| Reader, per question | 0.27 ms | 0.27 ms |
+| Writer, per reply (≈13 tokens) | 0.67 ms | 0.81 ms |
 | **SmolLM2-135M shape · synthetic weights† · 128-token prompt, 64 decoded** | | |
-| q4 prompt tokens/s (1 / 2 threads) | 145 / 252 | 99.1 / 176 |
-| q4 decode tokens/s (1 / 2 threads) | 66.4 / 106 | 51.3 / 84.6 |
+| q4 prompt tokens/s (1 / 2 threads) | 187 / 302 | 114 / 198 |
+| q4 decode tokens/s (1 / 2 threads) | 73.0 / 105 | 55.9 / 89.6 |
 | q4 peak memory | 86 MB | 86 MB |
-| int8 prompt tokens/s (1 / 2 threads) | 281 / 442 | 306 / 453 |
-| int8 decode tokens/s (1 / 2 threads) | 54.9 / 88.9 | 67.5 / 101 |
+| int8 prompt tokens/s (1 / 2 threads) | 308 / 496 | 388 / 582 |
+| int8 decode tokens/s (1 / 2 threads) | 50.5 / 80.4 | 86.2 / 115 |
 | int8 peak memory | 145 MB | 144 MB |
 | **Library size · stripped · whole runtime with the language-model path** | | |
-| Android library (.so) | arm64-v8a 180 KB · armeabi-v7a 145 KB · x86_64 197 KB |  |
+| Android library (.so) | arm64-v8a 191 KB · armeabi-v7a 152 KB · x86_64 197 KB |  |
 
 † SmolLM2-135M shape with synthetic (random) weights, written by tool/make_synthetic_slm.py: every matrix product, the cache and the memory are the real model's size, but the text it writes means nothing.
 
-The run: https://github.com/pesaclarity/rayo/actions/runs/44343281346
+The run: https://github.com/pesaclarity/rayo/actions/runs/44352609817
 
 ## History (the last 10 runs; all in [history.csv](history.csv))
 
 | date | commit | runner | reader ms | writer ms | q4 decode tok/s 1 / 2 threads | int8 decode tok/s 1 / 2 threads |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-18 | [`cdd7f55`](https://github.com/pesaclarity/rayo/commit/cdd7f559b6cfe88fa917d4760bebca9bdc5dad37) | ubuntu-24.04-arm | 0.3 | 0.8 | 55.9 / 89.6 | 86.2 / 115 |
+| 2026-11-18 | [`cdd7f55`](https://github.com/pesaclarity/rayo/commit/cdd7f559b6cfe88fa917d4760bebca9bdc5dad37) | ubuntu-24.04 | 0.3 | 0.7 | 73.0 / 105 | 50.5 / 80.4 |
 | 2026-11-18 | [`ec33200`](https://github.com/pesaclarity/rayo/commit/ec33200d47f454eb128cd5ddf9ed00658af16f87) | ubuntu-24.04-arm | 0.3 | 0.8 | 51.3 / 84.6 | 67.5 / 101 |
 | 2026-11-18 | [`ec33200`](https://github.com/pesaclarity/rayo/commit/ec33200d47f454eb128cd5ddf9ed00658af16f87) | ubuntu-24.04 | 0.3 | 0.8 | 66.4 / 106 | 54.9 / 88.9 |
 | 2026-11-18 | [`21c953e`](https://github.com/pesaclarity/rayo/commit/21c953ebad8cb88790add8fcb8462e371cd6229d) | ubuntu-24.04-arm | 0.3 | 0.8 | 53.3 / 91.1 | 72.8 / 112 |
