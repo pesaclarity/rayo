@@ -179,7 +179,19 @@ jobs:
           # 150 before the language-model path (tokeniser, sampler, generator, Unicode
           # tables, Q4 kernels: about 60 KB); tool/ci/android.sh says what.
           BUDGET_KB: "200"
-        run: SUMMARY="$GITHUB_STEP_SUMMARY" ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" tool/ci/android.sh
+        run: |
+          SUMMARY="$GITHUB_STEP_SUMMARY" ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" \
+            SIZES_JSON="$RUNNER_TEMP/android-sizes.json" tool/ci/android.sh
+      # The sizes for the benchmark table (bench-publish), on main only.
+      - name: Sizes for the benchmark table
+        if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-android-sizes
+          path: ${{ runner.temp }}/android-sizes.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   dart:
     name: dart (${{ matrix.os }})
@@ -197,12 +209,14 @@ jobs:
       - name: Format, analyze, test (the hook compiles the C library)
         run: tool/ci/dart.sh
 
+  # On main only, never blocking CI: the timings (the job summary), and the numbers of the
+  # README's benchmark table as JSON (tool/ci/bench_run.sh), one file a runner.
   bench:
     name: bench (${{ matrix.os }})
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [linux-x86_64, linux-arm64]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -210,9 +224,106 @@ jobs:
         include:
           - os: ubuntu-24.04
             flags: -mavx2 -mfma
+            arch: x86_64
           - os: ubuntu-24.04-arm
             flags: ""
+            arch: arm64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
       - name: Bench
         run: SUMMARY="$GITHUB_STEP_SUMMARY" tool/ci/bench.sh clang ${{ matrix.flags }}
+      - name: NumPy (the synthetic language model is written with it)
+        run: python -m pip install numpy==2.5.3
+      - name: Benchmark table numbers (medians of several runs)
+        env:
+          BENCH_RUNNER: ${{ matrix.os }}
+        run: tool/ci/bench_run.sh "$RUNNER_TEMP/bench-${{ matrix.arch }}.json" clang ${{ matrix.flags }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-${{ matrix.arch }}
+          path: ${{ runner.temp }}/bench-${{ matrix.arch }}.json
+          retention-days: 30
+
+  # On main only, never blocking CI, and never committing to main: adds the run's numbers
+  # to the `bench` branch (results/, history.csv, README.md, the table as SVG and PNGs,
+  # tool/ci/bench_publish.sh), which the README's image is read from; then screenshots the
+  # README as GitHub shows it and puts them, with the table's PNGs, on the rolling
+  # `marketing` release and in the run's artifacts.
+  bench-publish:
+    name: bench-publish
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [bench, android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    continue-on-error: true
+    permissions:
+      contents: write # the bench branch and the marketing release, nothing else
+    concurrency:
+      group: bench-publish
+      cancel-in-progress: false
+    env:
+      PLAYWRIGHT_VERSION: "1.63.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The bench jobs' numbers
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: bench-*
+          path: ${{ runner.temp }}/incoming
+          merge-multiple: true
+      - name: Playwright and Chromium
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" \
+            "playwright@$PLAYWRIGHT_VERSION"
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+          echo "NODE_PATH=$RUNNER_TEMP/pw/node_modules" >>"$GITHUB_ENV"
+      - name: Publish to the bench branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: tool/ci/bench_publish.sh "$RUNNER_TEMP/incoming" "$RUNNER_TEMP/bench-branch"
+      - name: Wait for the image caches
+        run: sleep 90
+      - name: Screenshots of the README on GitHub
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/marketing"
+          node tool/ci/github_screenshot.cjs "$RUNNER_TEMP/marketing" \
+            "${{ github.server_url }}/${{ github.repository }}"
+      - name: The marketing release's assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          m="$RUNNER_TEMP/marketing"
+          for f in table-light.png table-dark.png table.svg; do
+            if [ -f "$RUNNER_TEMP/bench-branch/$f" ]; then cp "$RUNNER_TEMP/bench-branch/$f" "$m/"; fi
+          done
+          ls -la "$m"
+          notes="Images for rayo's pages, replaced after every push to main: the benchmark table (light and dark) and the README as GitHub shows it. Latest: ${GITHUB_SHA::7}, $(date -u +%Y-%m-%d). Numbers from GitHub-hosted runners (shared virtual machines): indicative, not a phone's. The language model has synthetic weights of SmolLM2-135M's shape."
+          if ! gh release view marketing -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create marketing -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Marketing images (rolling)" --notes "$notes" --prerelease --latest=false
+          else
+            gh release edit marketing -R "$GITHUB_REPOSITORY" --notes "$notes"
+          fi
+          shopt -s nullglob
+          files=("$m"/*.png "$m"/*.svg)
+          if [ ${#files[@]} -gt 0 ]; then
+            gh release upload marketing -R "$GITHUB_REPOSITORY" --clobber "${files[@]}"
+          fi
+      - name: Marketing images as an artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: marketing
+          path: |
+            ${{ runner.temp }}/marketing
+            ${{ runner.temp }}/bench-branch/README.md
+            ${{ runner.temp }}/bench-branch/latest.json
+          if-no-files-found: ignore
+          retention-days: 30

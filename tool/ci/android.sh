@@ -4,7 +4,8 @@
 # over BUDGET_KB (default 200: 150 until the language-model path, whose
 # tokeniser, sampler, generator, Unicode tables and kernels add about 60 KB).
 # The chat example is built for the phones' ABIs too, as
-# docs/RUNNING-SLMS.md does. With SUMMARY set, a Markdown table too.
+# docs/RUNNING-SLMS.md does. With SUMMARY set, a Markdown table too; with
+# SIZES_JSON set, the sizes as JSON (for the benchmark table).
 source "$(dirname "$0")/common.sh"
 
 ndk="${ANDROID_NDK_HOME:?set ANDROID_NDK_HOME}"
@@ -14,6 +15,7 @@ out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 printf '{\n  global:\n    rayo_*;\n  local:\n    *;\n};\n' >"$out/rayo.map"
 rows=()
+sizes=()
 status=0
 for abi in "aarch64-linux-android24:arm64-v8a:" "armv7a-linux-androideabi24:armeabi-v7a:-mfpu=neon" \
   "x86_64-linux-android24:x86_64:-msse4.2"; do
@@ -30,6 +32,7 @@ for abi in "aarch64-linux-android24:arm64-v8a:" "armv7a-linux-androideabi24:arme
   if [ "$kb" -gt "$budget" ]; then verdict="over $budget KB"; status=1; fi
   echo "$name: $size bytes ($kb KB) $verdict"
   rows+=("| $name | $size | $kb | $verdict |")
+  sizes+=("$name=$size")
   # The tests build for the ABI too (they run on the arm64 and armv7 jobs).
   # shellcheck disable=SC2046,SC2086
   "$bin/clang" --target="$target" "${C89_FLAGS[@]}" "${INCLUDES[@]}" -Itests $flags -O2 \
@@ -49,5 +52,8 @@ if [ -n "${SUMMARY:-}" ]; then
     echo "| --- | --- | --- | --- |"
     printf '%s\n' "${rows[@]}"
   } >>"$SUMMARY"
+fi
+if [ -n "${SIZES_JSON:-}" ]; then
+  python3 tool/ci/bench_results.py sizes "$SIZES_JSON" "${sizes[@]}"
 fi
 exit $status
