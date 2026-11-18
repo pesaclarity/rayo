@@ -219,7 +219,59 @@ final class RayoModelOptions extends Struct {
 
   @Int()
   external int access;
+
+  external Pointer<RayoIntegrity> integrity;
 }
+
+/// `rayo_integrity` (rayo/verify.h).
+final class RayoIntegrity extends Struct {
+  external Pointer<Uint8> sha256;
+
+  external Pointer<Uint8> publicKey;
+
+  external Pointer<Uint8> signature;
+}
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Size,
+    Pointer<RayoModelOptions>,
+    Pointer<Pointer<RayoModelHandle>>,
+    Pointer<RayoMessage>,
+  )
+>()
+external int rayo_model_create_with(
+  Pointer<Void> data,
+  int size,
+  Pointer<RayoModelOptions> options,
+  Pointer<Pointer<RayoModelHandle>> out,
+  Pointer<RayoMessage> msg,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Size,
+    Pointer<RayoIntegrity>,
+    Pointer<RayoMessage>,
+  )
+>()
+external int rayo_verify(
+  Pointer<Void> data,
+  int size,
+  Pointer<RayoIntegrity> want,
+  Pointer<RayoMessage> msg,
+);
+
+@Native<
+  Int32 Function(Pointer<Uint8>, Pointer<RayoIntegrity>, Pointer<RayoMessage>)
+>()
+external int rayo_verify_file(
+  Pointer<Uint8> path,
+  Pointer<RayoIntegrity> want,
+  Pointer<RayoMessage> msg,
+);
 
 /// `rayo_sampler_options`.
 final class RayoSamplerOptions extends Struct {

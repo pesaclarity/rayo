@@ -5,11 +5,21 @@
 
 #include "core/alloc.h"
 #include "core/message.h"
+#include "rayo/verify.h"
+
+#include "core/small_begin.h"
 
 static rayo_status read_header(rayo_model *m, const rayo_model_options *options,
                                rayo_message *msg) {
   const rayo_json *meta;
-  rayo_status s = rayo_pcwt_read(m->file, m->file_size, &m->arena, &m->pcwt, msg);
+  rayo_status s;
+  /* The bytes rayo will read are the bytes checked: the copy, or the
+   * mapping. */
+  if (options && options->integrity) {
+    s = rayo_verify(m->file, m->file_size, options->integrity, msg);
+    if (s != RAYO_OK) return s;
+  }
+  s = rayo_pcwt_read(m->file, m->file_size, &m->arena, &m->pcwt, msg);
   if (s != RAYO_OK) return s;
   s = rayo_graph_read(rayo_json_get(m->pcwt.header, "graph"), &m->pcwt, options, &m->arena,
                       &m->graph, msg);
@@ -165,3 +175,5 @@ void rayo_model_memory(const rayo_model *model, rayo_memory_info *out) {
   out->weights = model->file_size;
   out->overhead = model->arena.bytes;
 }
+
+#include "core/small_end.h"

@@ -74,6 +74,9 @@ typedef struct rayo_model_options {
   int read_file;
   /* rayo_model_load only: a rayo_access hint for the mapped file. */
   int access;
+  /* What the file must match (rayo/verify.h), checked before rayo reads
+   * any of it: a mismatch is RAYO_ERR_INTEGRITY. NULL: no check. */
+  const struct rayo_integrity *integrity;
 } rayo_model_options;
 
 /* rayo_model_create with `options` (NULL: the defaults). */

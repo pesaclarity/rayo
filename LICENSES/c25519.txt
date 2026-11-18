@@ -1,0 +1,21 @@
+src/crypto/ed25519.c verifies Ed25519 signatures with code from Daniel Beer's
+c25519, version 2017-10-05 (https://www.dlbeer.co.nz/oss/c25519.html; the same
+files are kept in https://github.com/DavyLandman/compact25519, src/c25519,
+which is released under CC0 1.0): the arithmetic mod 2^255 - 19 (f25519.c),
+mod the group order (fprime.c), the Edwards curve operations (ed25519.c) and
+the verification (edsign.c), each of which carries this notice:
+
+====================================================
+Daniel Beer <dlbeer@gmail.com>
+
+This file is in the public domain.
+====================================================
+
+Public-domain code may be used in a work under any licence, the AGPL-3.0
+included. rayo's changes: C89 (no stdint.h, no inline functions, no
+designated initialisers), rayo's integer types with explicit conversions,
+only what verifying a signature needs (no keys, no signing), SHA-512 from
+src/crypto/sha512.c (rayo's own, FIPS 180-4, streamed), strict checks that S
+is below the group's order and that the public key and R are canonical
+encodings, and size-optimised compilation. tests/test_security.c checks it
+against RFC 8032's test vectors.
