@@ -5,6 +5,12 @@ their own (``ONNX_*``), which the reference and the lowering know.
 
 Layouts: ONNX's 1-D Conv is channels first ([N, C, T]); it becomes a transpose, TFLite's
 CONV_2D on one row, and a transpose back, so rayo's conv1d ([T, C]) runs it.
+
+Names: a weight is named after its layer, from the initializer's name when it is a PyTorch
+parameter's (``conv_1.weight`` is layer ``conv_1``), otherwise from the scope PyTorch's exporter
+gives the node reading it (``/hidden/MatMul`` is layer ``hidden``). So a torch module whose
+layers are named as the Keras model's were gives a file with the same weight names
+(``conv_1.kernel``, ``hidden.bias``, ``token_embedding.table``, ``ln.gamma``).
 """
 
 from __future__ import annotations
@@ -77,12 +83,15 @@ def read(raw: bytes) -> Graph:
             v = v.astype(np.float32)
         return tensor(name, v.dtype.name, v.shape, v)
 
+    hints: dict[int, str] = {}
     for init in og.initializer:
         v = numpy_helper.to_array(init)
         if v.dtype == np.float64:
             v = v.astype(np.float32)
-        tensor(init.name, v.dtype.name, v.shape, v)
+        i = tensor(init.name, v.dtype.name, v.shape, v)
         ranks[init.name] = v.ndim
+        if _param_layer(init.name):
+            hints[i] = _param_layer(init.name)
     inputs = []
     in_names: dict[int, str] = {}
     for vi in og.input:
@@ -121,6 +130,11 @@ def read(raw: bytes) -> Graph:
         t = node.op_type
         ins = [inp(node, k) for k in range(len(node.input))]
         dt_in = tensors[ins[0]].dtype if ins and ins[0] >= 0 else "float32"
+        layer = _scope(node.name)
+        for i in ins:
+            if i >= 0 and tensors[i].const and i not in hints and layer:
+                hints[i] = layer
+        made = len(tensors)  # constants made from this node's inputs are named as its layer
 
         def add(kind: str, inputs: list[int], outputs: list[int], at: int = idx,
                 **options: Any) -> None:
@@ -149,6 +163,17 @@ def read(raw: bytes) -> Graph:
             add("LOGICAL_AND" if t == "And" else "LOGICAL_OR", ins, [out(node, 0, "bool")])
         elif t == "Where":
             add("SELECT_V2", ins, [out(node, 0, tensors[ins[1]].dtype)])
+        elif t == "Clip":  # PyTorch's clamp: a maximum and a minimum
+            x = ins[0]
+            for k, kind in ((1, "MAXIMUM"), (2, "MINIMUM")):
+                if k < len(ins) and ins[k] >= 0:
+                    last = not any(j < len(ins) and ins[j] >= 0 for j in range(k + 1, 3))
+                    y = out(node, 0, dt_in) if last else tensor(f"{node.output[0]}/{kind}",
+                                                                dt_in)
+                    add(kind, [x, ins[k]], [y])
+                    x = y
+            if x == ins[0]:
+                add("IDENTITY", [x], [out(node, 0, dt_in)])
         elif t == "Softmax":
             axis = int(attr(node, "axis", -1))
             r = rank(node.input[0])
@@ -277,15 +302,36 @@ def read(raw: bytes) -> Graph:
         else:
             raise ConvertError(f"node {idx} ({t}, output {node.output[0]!r}): the ONNX op {t} "
                                "is not supported")
+        source = next((hints[i] for i in ins[1:] if i in hints), None) or layer
+        for i in range(made, len(tensors)):
+            if tensors[i].const and source:
+                hints.setdefault(i, source)
     outputs, out_names = [], {}
     for vo in og.output:
         if vo.name not in by_name:
             raise ConvertError(f"output {vo.name}: not computed by the graph")
         outputs.append(by_name[vo.name])
         out_names[by_name[vo.name]] = vo.name
-    g = Graph(tensors, ops, inputs, outputs, in_names, out_names, "onnx")
+    g = Graph(tensors, ops, inputs, outputs, in_names, out_names, "onnx", hints)
     _fuse_erf_gelu(g)
     return g
+
+
+def _param_layer(name: str) -> str | None:
+    """The layer of a PyTorch parameter's name (``attention_0.query.weight``:
+    ``attention_0.query``), or None for a name PyTorch's exporter made (``onnx::MatMul_7``)."""
+    if "::" in name or "/" in name or "." not in name:
+        return None
+    return name.rsplit(".", 1)[0] or None
+
+
+def _scope(node_name: str) -> str | None:
+    """The layer of a node PyTorch's exporter named by its module path (``/hidden/MatMul``:
+    ``hidden``; ``/attention_0/query/MatMul``: ``attention_0.query``)."""
+    if not node_name.startswith("/"):
+        return None
+    parts = [p for p in node_name.split("/")[1:-1] if p]
+    return ".".join(parts) or None
 
 
 def _conv(node: Any, idx: int, ins: list[int], tensors: list[Tensor], const: Any, out: Any,

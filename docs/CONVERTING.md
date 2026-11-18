@@ -62,9 +62,13 @@ rayo-convert tests/ask/ask-writer.tflite -o ask-writer.weights --name ask-writer
 | `--no-attention` | do not recognise attention; convert its ops one by one |
 | `--input-shape NAME=1,64` | an input's shape where the file leaves sizes open |
 | `--metadata JSON` | the file's `metadata` object |
+| `--weights float32\|int8` | `float32` (default): the weights as the source holds them, a TFLite dynamic-range model's int8 included. `int8`: the float32 weights quantised by the converter ([below](#int8-from-float-graphs---weights-int8)) |
+| `--int8-tensors CLASSES` | with `--weights int8`: which weights, by class: `dense`, `conv1d`, `embedding`, comma-separated, or `all` (default) |
+| `--int8-min-size N` | with `--weights int8`: weights with fewer than `N` values stay float32 (default 1024, TFLite's converter's threshold) |
 
 From Python: `rayo_convert.convert_file(path, rayo_convert.Options(...))` gives the file's
-bytes, the graph, the weights and the notes.
+bytes, the graph, the weights and the notes; `Options(weights="int8", int8_tensors=(...),
+int8_min_size=...)` are the int8 options.
 
 ## What it does
 
@@ -139,9 +143,21 @@ selects and comparisons between two computed tensors, tensors of rank above 4, a
 (`x * 0.5 * (1 + erf(x / sqrt 2))`), `Softmax` (last axis), `LayerNormalization` (last
 axis), `BatchNormalization` (as `mul` and `add`), `Gather`, `Concat`, `Reshape`, `Flatten`,
 `Squeeze`, `Unsqueeze`, `Transpose`, `Slice`, `Split`, `ReduceMean` and the other
-reductions, comparisons, `Where`, `Cast`, `Identity`, `Dropout`, and, folded, `Shape`,
-`ConstantOfShape`, `Range`, `Expand`, `Trilu`, `Tile`, `Constant`. int64 ids become int32.
-Quantised ONNX ops (`QLinear*`, `MatMulInteger`) are refused.
+reductions, comparisons, `Where`, `Clip` (PyTorch's `clamp`: `maximum` and `minimum`),
+`Cast`, `Identity`, `Dropout`, and, folded, `Shape`, `ConstantOfShape`, `Range`, `Expand`,
+`Trilu`, `Tile`, `Constant`. int64 ids become int32. Transposes move past the elementwise
+ops after them (both inputs of a binary one, when they are transposed alike) and go where a
+later one undoes them, so PyTorch's channels-first `Conv1d` between layers that work on
+`[T, C]` (with ReLUs and residual adds between) leaves no transpose, and each ReLU fuses into
+its convolution. Quantised
+ONNX ops (`QLinear*`, `MatMulInteger`) are refused: for int8, convert the float graph with
+`--weights int8` ([below](#int8-from-float-graphs---weights-int8)).
+
+Weights are named after their layers as for TFLite: from an initializer's name when it is a
+PyTorch parameter's (`conv_1.weight` is layer `conv_1`), otherwise from the scope PyTorch's
+exporter gives the node that reads it (`/slot_hidden/MatMul`, reading `onnx::MatMul_7`, is
+layer `slot_hidden`). So a torch module with the Keras model's layer names gives a file with
+the same names: `conv_1.kernel`, `slot_hidden.bias`, `token_embedding.table`, `ln.gamma`.
 
 ## int8: TFLite's dynamic-range models
 
@@ -165,6 +181,60 @@ converted model gives TFLite's numbers. Per op:
 
 Splitting an int8 dense layer's rows (one `qkv` projection into query, key and value) keeps
 its products: each row of the input is quantised the same way for each part.
+
+## int8 from float graphs: `--weights int8`
+
+```sh
+rayo-convert reader.onnx -o reader.weights --weights int8              # every class
+rayo-convert reader.onnx -o reader.weights --weights int8 --int8-tensors dense,conv1d
+```
+
+The converter quantises a float32 graph's weights itself (`rayo_convert/quantise.py`), into
+the same int8 a TFLite dynamic-range model holds, so the scheme lives in one place, the
+files run on the kernels above and the app's Dart reader reads them unchanged. Mainly for
+ONNX graphs exported from PyTorch; a float32 TFLite file works the same way.
+
+| Class | The weight | Its int8 | The input, as the layer runs |
+| --- | --- | --- | --- |
+| `dense` | `Gemm`, `MatMul` with a constant weight (`FULLY_CONNECTED`): kernel `[out, in]` | one scale per output (axis 0) | each row alone, asymmetric (`input_quantization: rows`) |
+| `conv1d` | 1-D `Conv` (`CONV_2D` over one row): kernel `[out, 1, size, in]` | one scale per output (axis 0) | the whole tensor, a dilated convolution's each phase alone (`tensor_phases`) |
+| `embedding` | `Gather` along axis 0 of a constant `[rows, width]` table | one scale for the table | none: each row dequantised as it is read |
+
+- **Weights:** symmetric, zero point 0. `scale = max |w| / 127` over what shares a scale (1
+  where every value is 0), `q = round(w / scale)`, halves away from zero, so the largest
+  magnitude is ±127. Scales are float32, stored as for TFLite's files (FORMAT.md).
+- **Activations:** quantised on the fly by rayo's kernels, as for TFLite's hybrid ones
+  (OPS.md, "Linear layers"): nothing about them is in the file but `input_quantization`.
+- **What stays float32:** weights with fewer than `--int8-min-size` values (1024 by default,
+  so the same tensors as TFLite's converter: a small table or the last dense of a head); the
+  classes left out of `--int8-tensors`; a weight also read by an op that is not of its class
+  (noted); biases, norms, and `matmul` weights. The notes list each.
+- **Deterministic:** NumPy alone, no state; the same graph gives the same bytes.
+
+The reference (`rayo_convert.ref`) gives each quantised op this meaning (for a dilated
+convolution, each phase quantised alone, as rayo's `conv1d` does), and the tests
+(`convert/tests/test_int8.py`) check it three ways:
+
+- **Against the reference**, on a model with the message reader's and the Ask reader's op
+  families as PyTorch exports them (an embedding, channels-first convolutions, one dilated by
+  4 and residual, layer norm, masked mean pooling with `Clip`, dense heads): the int8 weights
+  are the reference's, and at least 99% of rayo's output values are within 1e-5 of it
+  (measured over 203 questions: 99.96%, the rest 1.8e-2 at most). The others are where an
+  activation lands on a rounding boundary of the on-the-fly quantisation: rayo sums in
+  float32 and the reference in float64, so one of them can take the next int8 value, one step
+  of that layer's input scale. In float32 every value is within 1e-5 (measured 1.8e-6).
+- **Against the TFLite path**: the released Ask reader and writer (`tests/ask/*.tflite`), with
+  their int8 weights turned back into floats and quantised again by `--weights int8`, give
+  the file the TFLite conversion gives, byte for byte: every int8 value, every scale (the
+  same float32), every float32 tensor kept, the graph. So rayo, and the Dart reader, compute
+  with them exactly as with today's files.
+- **Against the float model** (ONNX's own evaluator): the same labels; probabilities within
+  2e-2 (measured 1.7e-2 at worst over 203 questions of a model with random weights), int8's
+  error.
+
+A dilated convolution in a float graph (ONNX's `Conv` with `dilations`) quantises each phase
+alone, as rayo's `conv1d` does; TFLite's own native dilated int8 `CONV_2D`, which quantises
+the whole input, stays refused.
 
 ## Fusions
 
@@ -287,7 +357,8 @@ The graph's `symbols` are `T` (at most the source's length) and `P` (at most one
 int8 included; `rayo_convert.runtime` builds rayo's C library from a checkout and runs a
 converted file (`Session.bind`, `run`, `output`), as the tests do
 (`convert/tests/`): every synthetic model is checked against the reference, the ONNX ones
-against ONNX's own reference evaluator, and the Ask models against TFLite's recordings.
+against ONNX's own reference evaluator, the int8 ones from float graphs as above, and the Ask
+models against TFLite's recordings.
 
 ## Language models
 
