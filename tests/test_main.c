@@ -27,6 +27,7 @@ void test_llama(void);
 void test_text(void);
 void test_generator(void);
 void test_lean(void);
+void test_security(void);
 
 unsigned char *test_read_file(const char *path, size_t *size) {
   FILE *f = fopen(path, "rb");
@@ -103,7 +104,8 @@ static const test_case tests[] = {{"arena", test_arena},
                                   {"text", test_text},
                                   {"generator", test_generator},
                                   {"lean", test_lean},
-                                  {"ask", test_ask}};
+                                  {"ask", test_ask},
+                                  {"security", test_security}};
 
 int main(int argc, char **argv) {
   int ran = 0;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The test models are exactly what tool/make_test_models.py and
-# tool/make_llama_test_model.py write. Their expected outputs must match to
+# tool/make_llama_test_model.py write, and tests/malformed what
+# tool/make_malformed.py writes. Their expected outputs must match to
 # 1e-12 (1e-5 for the language model's logits, which are rounded to six
 # places): NumPy's float sums can round differently on another CPU (its SIMD
 # paths), so they are not compared byte for byte.
@@ -12,7 +13,8 @@ trap 'rm -rf "$before"' EXIT
 cp tests/models/expected.json tests/models/llama_expected.json "$before/"
 python3 tool/make_test_models.py >/dev/null
 python3 tool/make_llama_test_model.py >/dev/null
-git diff --exit-code --stat -- tests/models ':!tests/models/expected.json' \
+python3 tool/make_malformed.py
+git diff --exit-code --stat -- tests/models tests/malformed ':!tests/models/expected.json' \
   ':!tests/models/llama_expected.json'
 python3 - "$before" <<'PY'
 import json, sys
