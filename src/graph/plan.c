@@ -63,6 +63,9 @@ static rayo_status node_shape(const rayo_graph *graph, const rayo_pcwt *weights,
   memset(t, 0, sizeof *t);
   *need = 0;
   s = n->op->infer(n->params, args, symbols, t, need, msg);
+  /* The memory stays the node's whatever infer says: a bind that fails
+   * puts the shapes back, and must find the planned memory there. */
+  t->data = data;
   if (s == RAYO_OK && !fits(&t->shape)) {
     s = rayo_fail(msg, RAYO_ERR_SHAPE, "too large");
   }
@@ -72,7 +75,6 @@ static rayo_status node_shape(const rayo_graph *graph, const rayo_pcwt *weights,
     if (msg) why = *msg;
     return rayo_fail(msg, s, "node %s: %s", n->output, why.text);
   }
-  t->data = data;
   return RAYO_OK;
 }
 

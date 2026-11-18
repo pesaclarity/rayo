@@ -427,7 +427,50 @@ static void graph_names(void) {
   free(file);
 }
 
+/* A bind that fails leaves every tensor's memory where it was: a node
+ * whose infer failed used to lose its data pointer, and the next run wrote
+ * through NULL (found by the model fuzz target). Here a reshape to [2]
+ * fails for T = 3. */
+static void failed_bind(void) {
+  static const char header[] =
+      "{\"format_version\":1,\"model\":\"bind\",\"tensors\":[],\"graph\":{\"version\":1,"
+      "\"symbols\":{\"T\":4},\"plan\":{\"T\":2},\"inputs\":[{\"name\":\"x\",\"dtype\":"
+      "\"float32\",\"shape\":[\"T\"]}],\"nodes\":[{\"op\":\"add\",\"inputs\":[\"x\",\"x\"],"
+      "\"output\":\"a\"},{\"op\":\"reshape\",\"inputs\":[\"a\"],\"output\":\"b\",\"shape\":[2]},"
+      "{\"op\":\"add\",\"inputs\":[\"b\",\"b\"],\"output\":\"c\"}],"
+      "\"outputs\":[{\"name\":\"c\",\"node\":\"c\"}]}}";
+  const size_t h = (sizeof header - 1 + 3) / 4 * 4;
+  unsigned char *file = calloc(1, 12 + h);
+  rayo_model *m = NULL;
+  rayo_session *s = NULL;
+  rayo_tensor_view before, after, in;
+  rayo_message msg;
+  if (!file) return;
+  memcpy(file, "PCWT\1\0\0\0", 8);
+  file[8] = (unsigned char)(h & 255u);
+  file[9] = (unsigned char)(h >> 8);
+  memset(file + 12, ' ', h);
+  memcpy(file + 12, header, sizeof header - 1);
+  EXPECT(rayo_model_create(file, 12 + h, &m, &msg) == RAYO_OK);
+  EXPECT(m && rayo_session_create(m, &s, &msg) == RAYO_OK);
+  if (s) {
+    rayo_session_output(s, 0, &before);
+    EXPECT(rayo_session_bind(s, "T", 3, NULL) == RAYO_ERR_SHAPE);
+    rayo_session_input(s, 0, &in);
+    ((float *)in.data)[0] = 1.0f;
+    ((float *)in.data)[1] = 2.0f;
+    EXPECT(rayo_session_run(s, NULL) == RAYO_OK);
+    rayo_session_output(s, 0, &after);
+    EXPECT(after.data == before.data && after.data != NULL);
+    EXPECT(after.data && ((const float *)after.data)[1] == 8.0f);
+  }
+  rayo_session_destroy(s);
+  rayo_model_destroy(m);
+  free(file);
+}
+
 void test_security(void) {
+  failed_bind();
   malformed_corpus();
   tokenizer_limits();
   tokenizer_text();
