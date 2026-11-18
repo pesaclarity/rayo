@@ -53,36 +53,45 @@ void test_quantize(void) {
   EXPECT(fabs(scale - 3.0 / 255.0) < 1e-9);
 }
 
-static void check_i8(rayo_gemm_i8_fn *fn, rayo_i32 a_offset, const char *name) {
-  enum { M = 7, N = 9, K = 96 }; /* M odd: the last row alone too */
-  rayo_i8 *a = malloc(M * K), *au = malloc(M * K), *w = malloc(N * K);
-  rayo_i32 *want = malloc(M * N * sizeof(rayo_i32)), *got = malloc(M * N * sizeof(rayo_i32));
-  rayo_i32 rowsum[N];
+/* One shape of an int8 product: the kernel against the generic one. */
+static int same_i8(rayo_gemm_i8_fn *fn, rayo_i32 a_offset, size_t m, size_t n, size_t k) {
+  enum { MMAX = 9, NMAX = 13, KMAX = 160 };
+  static rayo_i8 a[MMAX * KMAX], au[MMAX * KMAX], w[NMAX * KMAX];
+  static rayo_i32 want[MMAX * NMAX], got[MMAX * NMAX], rowsum[NMAX];
   int same = 1;
   size_t i, j, p;
-  if (!a || !au || !w || !want || !got) {
-    EXPECT(0);
-    return;
-  }
-  for (i = 0; i < M * K; i++) a[i] = (rayo_i8)((int)(next() % 256u) - 128);
-  for (i = 0; i < N * K; i++) w[i] = (rayo_i8)((int)(next() % 255u) - 127);
-  for (j = 0; j < N; j++) {
+  for (i = 0; i < m * k; i++) a[i] = (rayo_i8)((int)(next() % 256u) - 128);
+  for (i = 0; i < n * k; i++) w[i] = (rayo_i8)((int)(next() % 255u) - 127);
+  /* The extremes, where a sum is largest. */
+  a[0] = -128;
+  w[0] = -127;
+  for (j = 0; j < n; j++) {
     rowsum[j] = 0;
-    for (p = 0; p < K; p++) rowsum[j] += w[j * K + p];
+    for (p = 0; p < k; p++) rowsum[j] += w[j * k + p];
   }
-  for (i = 0; i < M * K; i++) au[i] = (rayo_i8)(int)((rayo_u8)a[i] ^ 0x80u);
-  rayo_gemm_i8_generic(a, K, M, w, K, N, K, want, N);
-  fn(a_offset ? au : a, K, M, w, K, N, K, got, N);
-  for (i = 0; i < M; i++) {
-    for (j = 0; j < N; j++) same &= got[i * N + j] - a_offset * rowsum[j] == want[i * N + j];
+  for (i = 0; i < m * k; i++) au[i] = (rayo_i8)(int)((rayo_u8)a[i] ^ 0x80u);
+  rayo_gemm_i8_generic(a, k, m, w, k, n, k, want, n);
+  fn(a_offset ? au : a, k, m, w, k, n, k, got, n);
+  for (i = 0; i < m; i++) {
+    for (j = 0; j < n; j++) same &= got[i * n + j] - a_offset * rowsum[j] == want[i * n + j];
+  }
+  return same;
+}
+
+/* Shapes with the blocks' leftovers (one row, odd rows, columns past a
+ * multiple of four and of eight). */
+static void check_i8(rayo_gemm_i8_fn *fn, rayo_i32 a_offset, const char *name) {
+  static const size_t ms[] = {1, 2, 4, 7, 9}, ns[] = {1, 4, 9, 13}, ks[] = {32, 96, 160};
+  int same = 1;
+  size_t x, y, z;
+  for (x = 0; x < sizeof ms / sizeof ms[0]; x++) {
+    for (y = 0; y < sizeof ns / sizeof ns[0]; y++) {
+      for (z = 0; z < sizeof ks / sizeof ks[0]; z++)
+        same &= same_i8(fn, a_offset, ms[x], ns[y], ks[z]);
+    }
   }
   printf("  int8 kernel %s: %s\n", name, same ? "same as generic" : "DIFFERS from generic");
   EXPECT(same);
-  free(a);
-  free(au);
-  free(w);
-  free(want);
-  free(got);
 }
 
 /* Value e of a group of `bits` (4 or 3) weights, as docs/FORMAT.md
@@ -102,14 +111,15 @@ static double half_value(rayo_u16 h) {
 /* A product of group-wise weights (`bits` 4 or 3, scales float32 or, with
  * `half`, float16) against double maths on the dequantised values, and the
  * kernel against the generic one, bit for bit. */
-static void check_q(rayo_gemm_q4_fn *fn, int bits, rayo_bool half, size_t K, const char *name) {
-  enum { M = 3, N = 7, KMAX = 608, GMAX = KMAX / RAYO_Q4_GROUP };
+static int check_q(rayo_gemm_q4_fn *fn, int bits, rayo_bool half, size_t K, size_t M, size_t N) {
+  enum { MMAX = 5, NMAX = 9, KMAX = 608, GMAX = KMAX / RAYO_Q4_GROUP };
   const size_t gb = bits == 4 ? RAYO_Q4_GROUP_BYTES : RAYO_Q3_GROUP_BYTES;
   const size_t G = K / RAYO_Q4_GROUP;
-  static float x[M * KMAX], ascale[M * GMAX], wscale[N * GMAX], want[M * N], got[M * N];
-  static rayo_u16 wscale16[N * GMAX];
-  static rayo_i8 q[M * KMAX];
-  static rayo_u8 w[N * GMAX * RAYO_Q4_GROUP_BYTES];
+  static float x[MMAX * KMAX], ascale[MMAX * GMAX], wscale[NMAX * GMAX], want[MMAX * NMAX],
+      got[MMAX * NMAX];
+  static rayo_u16 wscale16[NMAX * GMAX];
+  static rayo_i8 q[MMAX * KMAX];
+  static rayo_u8 w[NMAX * GMAX * RAYO_Q4_GROUP_BYTES];
   const void *ws = half ? (const void *)wscale16 : (const void *)wscale;
   rayo_gemm_q4_fn *generic = bits == 4 ? rayo_gemm_q4_generic : rayo_gemm_q3_generic;
   int same = 1, close = 1;
@@ -150,19 +160,29 @@ static void check_q(rayo_gemm_q4_fn *fn, int bits, rayo_bool half, size_t K, con
   for (i = 0; i < M * K; i++)
     close &= fabs(q[i] * ascale[i / 32] - x[i]) <= ascale[i / 32] * 0.5001;
   EXPECT(ascale[0] > 0.0f);
-  printf("  q%d kernel %s, %s scales, k %lu: %s\n", bits, name, half ? "float16" : "float32",
-         (unsigned long)K, same ? "same as generic" : "DIFFERS from generic");
   EXPECT(close);
-  EXPECT(same);
+  return same;
 }
 
+/* M and N with the blocks' leftovers: one row (a decoder's), two, an odd
+ * count; rows of weights past a multiple of four. */
 static void check_q4(rayo_gemm_q4_fn *q4, rayo_gemm_q4_fn *q3, const char *name) {
-  size_t k;
-  for (k = 96; k <= 608; k += 512) {
-    check_q(q4, 4, RAYO_FALSE, k, name);
-    check_q(q4, 4, RAYO_TRUE, k, name);
-    check_q(q3, 3, RAYO_FALSE, k, name);
-    check_q(q3, 3, RAYO_TRUE, k, name);
+  static const size_t shapes[][2] = {{3, 7}, {1, 9}, {2, 4}, {5, 8}};
+  int bits, half;
+  for (bits = 4; bits >= 3; bits--) {
+    for (half = 0; half < 2; half++) {
+      int same = 1;
+      size_t k, s;
+      for (k = 96; k <= 608; k += 512) {
+        for (s = 0; s < sizeof shapes / sizeof shapes[0]; s++) {
+          same &=
+              check_q(bits == 4 ? q4 : q3, bits, (rayo_bool)half, k, shapes[s][0], shapes[s][1]);
+        }
+      }
+      printf("  q%d kernel %s, %s scales: %s\n", bits, name, half ? "float16" : "float32",
+             same ? "same as generic" : "DIFFERS from generic");
+      EXPECT(same);
+    }
   }
 }
 
@@ -209,7 +229,20 @@ void test_kernels(void) {
   if (!rayo_cpu_has_avxvnni()) printf("  avx-vnni: this CPU has none, not run\n");
 #endif
 #if defined(RAYO_KERNELS_NEON_DOTPROD)
-  if (!rayo_cpu_has_dotprod()) printf("  neon-dotprod: this CPU has none, not run\n");
+  /* Each ARM set this CPU runs, whichever is best. */
+  if (rayo_cpu_has_dotprod()) {
+    check_i8(rayo_gemm_i8_neon_dotprod, 0, "neon-dotprod (run time)");
+    check_q4(rayo_gemm_q4_neon_dotprod, rayo_gemm_q3_neon_dotprod, "neon-dotprod (run time)");
+  } else {
+    printf("  neon-dotprod: this CPU has none, not run\n");
+  }
+#endif
+#if defined(RAYO_KERNELS_NEON_I8MM)
+  if (rayo_cpu_has_i8mm()) {
+    check_i8(rayo_gemm_i8_neon_i8mm, 0, "neon-i8mm (run time)");
+  } else {
+    printf("  neon-i8mm: this CPU has none, not run\n");
+  }
 #endif
   for (i = 0; i < 60; i++) a[i] = uniform();
   for (i = 0; i < 80; i++) w[i] = uniform();
