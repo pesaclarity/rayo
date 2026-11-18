@@ -1,9 +1,9 @@
 {
   "kind": "rayo-bench-run",
   "schema": 1,
-  "commit": "b7838f6648e8f100674d0e70412c092bb2c6bb6d",
-  "date": "2026-11-18T09:22:38Z",
-  "run_url": "https://github.com/pesaclarity/rayo/actions/runs/44274420673",
+  "commit": "21c953ebad8cb88790add8fcb8462e371cd6229d",
+  "date": "2026-11-18T14:55:04Z",
+  "run_url": "https://github.com/pesaclarity/rayo/actions/runs/44327395388",
   "synthetic_note": "SmolLM2-135M shape with synthetic (random) weights, written by tool/make_synthetic_slm.py: every matrix product, the cache and the memory are the real model's size, but the text it writes means nothing.",
   "note": "GitHub-hosted runners are shared virtual machines: these numbers are indicative and vary from run to run. They are not a phone's.",
   "runners": [
@@ -28,14 +28,14 @@
       "kernels": "avx-vnni",
       "ask": {
         "reader": {
-          "per_question_median_ms": 0.1468,
-          "per_question_p90_ms": 0.1544,
+          "per_question_median_ms": 0.155,
+          "per_question_p90_ms": 0.1628,
           "runs": 5
         },
         "writer": {
-          "per_reply_median_ms": 0.717,
-          "per_reply_p90_ms": 1.046,
-          "per_step_median_ms": 0.055,
+          "per_reply_median_ms": 0.532,
+          "per_reply_p90_ms": 0.782,
+          "per_step_median_ms": 0.0407,
           "runs": 5
         }
       },
@@ -47,9 +47,9 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 187.5,
-          "decode_tok_s": 87.96,
-          "peak_rss_mb": 86.1,
+          "prompt_tok_s": 188.3,
+          "decode_tok_s": 89.05,
+          "peak_rss_mb": 86.2,
           "file_mb": 72.4,
           "runs": 3
         },
@@ -60,9 +60,9 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 295.9,
-          "decode_tok_s": 144.5,
-          "peak_rss_mb": 86.0,
+          "prompt_tok_s": 302.3,
+          "decode_tok_s": 146.96,
+          "peak_rss_mb": 86.1,
           "file_mb": 72.4,
           "runs": 3
         },
@@ -73,8 +73,8 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 469.8,
-          "decode_tok_s": 98.82,
+          "prompt_tok_s": 518.9,
+          "decode_tok_s": 99.29,
           "peak_rss_mb": 145.0,
           "file_mb": 129.2,
           "runs": 3
@@ -86,9 +86,9 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 654.3,
-          "decode_tok_s": 159.8,
-          "peak_rss_mb": 144.9,
+          "prompt_tok_s": 694.3,
+          "decode_tok_s": 173.59,
+          "peak_rss_mb": 145.1,
           "file_mb": 129.2,
           "runs": 3
         }
@@ -116,14 +116,14 @@
       "kernels": "neon-dotprod",
       "ask": {
         "reader": {
-          "per_question_median_ms": 0.2759,
-          "per_question_p90_ms": 0.279,
+          "per_question_median_ms": 0.2789,
+          "per_question_p90_ms": 0.2818,
           "runs": 5
         },
         "writer": {
-          "per_reply_median_ms": 0.803,
-          "per_reply_p90_ms": 1.185,
-          "per_step_median_ms": 0.0617,
+          "per_reply_median_ms": 0.818,
+          "per_reply_p90_ms": 1.203,
+          "per_step_median_ms": 0.0632,
           "runs": 5
         }
       },
@@ -135,8 +135,8 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 99.4,
-          "decode_tok_s": 51.82,
+          "prompt_tok_s": 99.3,
+          "decode_tok_s": 53.3,
           "peak_rss_mb": 85.4,
           "file_mb": 72.4,
           "runs": 3
@@ -148,8 +148,8 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 177.2,
-          "decode_tok_s": 87.53,
+          "prompt_tok_s": 177.5,
+          "decode_tok_s": 91.14,
           "peak_rss_mb": 85.4,
           "file_mb": 72.4,
           "runs": 3
@@ -161,8 +161,8 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 306.5,
-          "decode_tok_s": 67.79,
+          "prompt_tok_s": 308.2,
+          "decode_tok_s": 72.77,
           "peak_rss_mb": 144.3,
           "file_mb": 129.2,
           "runs": 3
@@ -174,9 +174,9 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 454.2,
-          "decode_tok_s": 97.9,
-          "peak_rss_mb": 144.3,
+          "prompt_tok_s": 463.7,
+          "decode_tok_s": 111.78,
+          "peak_rss_mb": 144.2,
           "file_mb": 129.2,
           "runs": 3
         }
@@ -187,9 +187,9 @@
   "library_sizes": {
     "source": "android-ndk",
     "bytes": {
-      "arm64-v8a": 177760,
-      "armeabi-v7a": 142108,
-      "x86_64": 197512
+      "arm64-v8a": 178160,
+      "armeabi-v7a": 142076,
+      "x86_64": 197672
     }
   }
 }
