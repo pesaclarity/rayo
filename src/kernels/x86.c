@@ -1,21 +1,36 @@
-/* int8 products with SSE4.1 or AVX2: sign-extend to int16, then multiply
+/* int8 products with SSE4.1 and AVX2: sign-extend to int16, then multiply
  * and add pairs into int32 (pmaddwd), which cannot overflow, unlike
  * pmaddubsw. Two rows of `a` by four of `w` per step with AVX2, one by four
- * with SSE4.1, so each load is used several times. Intrinsics are a
- * compiler extension: this file is built only when the target has them. */
+ * with SSE4.1, so each load is used several times. And 4-bit weights by
+ * int8 activations (kernels.h). Each set is compiled for its instructions
+ * with a target attribute (or the build's own flags), so a library built
+ * for an older x86 still runs AVX2 where the CPU has it (select.c asks
+ * cpuid). Intrinsics, target attributes and cpuid are compiler extensions,
+ * confined to the x86 files. */
 #include "kernels/kernels.h"
 
 #if defined(RAYO_KERNELS_X86_SIMD)
 
 #include <immintrin.h>
 
-#if defined(__AVX2__)
+#if defined(__AVX2__) || !(defined(__GNUC__) || defined(__clang__))
+#define RAYO_AVX2
+#else
+#define RAYO_AVX2 __attribute__((target("avx2,fma")))
+#endif
+#if defined(__SSE4_1__) || !(defined(__GNUC__) || defined(__clang__))
+#define RAYO_SSE41
+#else
+#define RAYO_SSE41 __attribute__((target("sse4.1")))
+#endif
 
-static __m256i load16(const rayo_i8 *p) {
+#if defined(RAYO_KERNELS_X86_AVX2)
+
+RAYO_AVX2 static __m256i load16_avx2(const rayo_i8 *p) {
   return _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)(const void *)p));
 }
 
-static rayo_i32 hsum(__m256i v) {
+RAYO_AVX2 static rayo_i32 hsum_avx2(__m256i v) {
   __m128i s = _mm_add_epi32(_mm256_castsi256_si128(v), _mm256_extracti128_si256(v, 1));
   s = _mm_add_epi32(s, _mm_shuffle_epi32(s, 0x4E));
   s = _mm_add_epi32(s, _mm_shuffle_epi32(s, 0xB1));
@@ -23,15 +38,16 @@ static rayo_i32 hsum(__m256i v) {
 }
 
 /* Rows a0, a1 by w rows j .. j+3. */
-static void block2x4(const rayo_i8 *a0, const rayo_i8 *a1, const rayo_i8 *w, size_t ldw, size_t k,
-                     rayo_i32 *r0, rayo_i32 *r1) {
+RAYO_AVX2 static void block2x4_avx2(const rayo_i8 *a0, const rayo_i8 *a1, const rayo_i8 *w,
+                                    size_t ldw, size_t k, rayo_i32 *r0, rayo_i32 *r1) {
   const rayo_i8 *w0 = w, *w1 = w0 + ldw, *w2 = w1 + ldw, *w3 = w2 + ldw;
   __m256i c00 = _mm256_setzero_si256(), c01 = c00, c02 = c00, c03 = c00;
   __m256i c10 = c00, c11 = c00, c12 = c00, c13 = c00;
   size_t p;
   for (p = 0; p < k; p += 16) {
-    __m256i x0 = load16(a0 + p), x1 = load16(a1 + p);
-    __m256i y0 = load16(w0 + p), y1 = load16(w1 + p), y2 = load16(w2 + p), y3 = load16(w3 + p);
+    __m256i x0 = load16_avx2(a0 + p), x1 = load16_avx2(a1 + p);
+    __m256i y0 = load16_avx2(w0 + p), y1 = load16_avx2(w1 + p), y2 = load16_avx2(w2 + p),
+            y3 = load16_avx2(w3 + p);
     c00 = _mm256_add_epi32(c00, _mm256_madd_epi16(x0, y0));
     c01 = _mm256_add_epi32(c01, _mm256_madd_epi16(x0, y1));
     c02 = _mm256_add_epi32(c02, _mm256_madd_epi16(x0, y2));
@@ -41,24 +57,24 @@ static void block2x4(const rayo_i8 *a0, const rayo_i8 *a1, const rayo_i8 *w, siz
     c12 = _mm256_add_epi32(c12, _mm256_madd_epi16(x1, y2));
     c13 = _mm256_add_epi32(c13, _mm256_madd_epi16(x1, y3));
   }
-  r0[0] = hsum(c00);
-  r0[1] = hsum(c01);
-  r0[2] = hsum(c02);
-  r0[3] = hsum(c03);
-  r1[0] = hsum(c10);
-  r1[1] = hsum(c11);
-  r1[2] = hsum(c12);
-  r1[3] = hsum(c13);
+  r0[0] = hsum_avx2(c00);
+  r0[1] = hsum_avx2(c01);
+  r0[2] = hsum_avx2(c02);
+  r0[3] = hsum_avx2(c03);
+  r1[0] = hsum_avx2(c10);
+  r1[1] = hsum_avx2(c11);
+  r1[2] = hsum_avx2(c12);
+  r1[3] = hsum_avx2(c13);
 }
 
-void rayo_gemm_i8_x86(const rayo_i8 *RAYO_RESTRICT a, size_t lda, size_t m,
-                      const rayo_i8 *RAYO_RESTRICT w, size_t ldw, size_t n, size_t k,
-                      rayo_i32 *RAYO_RESTRICT c, size_t ldc) {
+RAYO_AVX2 void rayo_gemm_i8_avx2(const rayo_i8 *RAYO_RESTRICT a, size_t lda, size_t m,
+                                 const rayo_i8 *RAYO_RESTRICT w, size_t ldw, size_t n, size_t k,
+                                 rayo_i32 *RAYO_RESTRICT c, size_t ldc) {
   size_t i = 0, j;
   for (; i + 2 <= m; i += 2) {
     const rayo_i8 *a0 = a + i * lda;
     for (j = 0; j + 4 <= n; j += 4) {
-      block2x4(a0, a0 + lda, w + j * ldw, ldw, k, c + i * ldc + j, c + (i + 1) * ldc + j);
+      block2x4_avx2(a0, a0 + lda, w + j * ldw, ldw, k, c + i * ldc + j, c + (i + 1) * ldc + j);
     }
     if (j < n) rayo_gemm_i8_generic(a0, lda, 2, w + j * ldw, ldw, n - j, k, c + i * ldc + j, ldc);
   }
@@ -70,8 +86,8 @@ void rayo_gemm_i8_x86(const rayo_i8 *RAYO_RESTRICT a, size_t lda, size_t m,
  * weight (pmaddubsw, at most 2 * 127 * 8 per pair, no saturation), pairs
  * added into int32 lanes of four products (pmaddwd), then scaled in float
  * and added into eight lanes, as the generic kernel does. */
-static float dot_q4(const rayo_i8 *a, const float *as, const rayo_u8 *w, const float *ws,
-                    size_t groups) {
+RAYO_AVX2 static float dot_q4_avx2(const rayo_i8 *a, const float *as, const rayo_u8 *w,
+                                   const float *ws, size_t groups) {
   const __m128i low = _mm_set1_epi8(15);
   const __m256i eight = _mm256_set1_epi8(8), ones = _mm256_set1_epi16(1);
   __m256 acc = _mm256_setzero_ps();
@@ -91,49 +107,66 @@ static float dot_q4(const rayo_i8 *a, const float *as, const rayo_u8 *w, const f
   return rayo_q4_lanes_sum(lanes);
 }
 
-#else /* SSE4.1 */
+RAYO_AVX2 void rayo_gemm_q4_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale,
+                                 size_t m, const rayo_u8 *RAYO_RESTRICT w,
+                                 const float *RAYO_RESTRICT wscale, size_t n, size_t k,
+                                 float *RAYO_RESTRICT c, size_t ldc) {
+  const size_t groups = k / RAYO_Q4_GROUP;
+  size_t i, j;
+  for (j = 0; j < n; j++) {
+    const rayo_u8 *wj = w + j * (k / 2);
+    const float *sj = wscale + j * groups;
+    for (i = 0; i < m; i++)
+      c[i * ldc + j] = dot_q4_avx2(a + i * k, ascale + i * groups, wj, sj, groups);
+  }
+}
 
-static __m128i load8(const rayo_i8 *p) {
+#endif
+
+/* SSE4.1 */
+
+RAYO_SSE41 static __m128i load8_sse41(const rayo_i8 *p) {
   return _mm_cvtepi8_epi16(_mm_loadl_epi64((const __m128i *)(const void *)p));
 }
 
-static rayo_i32 hsum(__m128i s) {
+RAYO_SSE41 static rayo_i32 hsum_sse41(__m128i s) {
   s = _mm_add_epi32(s, _mm_shuffle_epi32(s, 0x4E));
   s = _mm_add_epi32(s, _mm_shuffle_epi32(s, 0xB1));
   return (rayo_i32)_mm_cvtsi128_si32(s);
 }
 
-static void block1x4(const rayo_i8 *a0, const rayo_i8 *w, size_t ldw, size_t k, rayo_i32 *r) {
+RAYO_SSE41 static void block1x4_sse41(const rayo_i8 *a0, const rayo_i8 *w, size_t ldw, size_t k,
+                                      rayo_i32 *r) {
   const rayo_i8 *w0 = w, *w1 = w0 + ldw, *w2 = w1 + ldw, *w3 = w2 + ldw;
   __m128i c0 = _mm_setzero_si128(), c1 = c0, c2 = c0, c3 = c0;
   size_t p;
   for (p = 0; p < k; p += 8) {
-    __m128i x = load8(a0 + p);
-    c0 = _mm_add_epi32(c0, _mm_madd_epi16(x, load8(w0 + p)));
-    c1 = _mm_add_epi32(c1, _mm_madd_epi16(x, load8(w1 + p)));
-    c2 = _mm_add_epi32(c2, _mm_madd_epi16(x, load8(w2 + p)));
-    c3 = _mm_add_epi32(c3, _mm_madd_epi16(x, load8(w3 + p)));
+    __m128i x = load8_sse41(a0 + p);
+    c0 = _mm_add_epi32(c0, _mm_madd_epi16(x, load8_sse41(w0 + p)));
+    c1 = _mm_add_epi32(c1, _mm_madd_epi16(x, load8_sse41(w1 + p)));
+    c2 = _mm_add_epi32(c2, _mm_madd_epi16(x, load8_sse41(w2 + p)));
+    c3 = _mm_add_epi32(c3, _mm_madd_epi16(x, load8_sse41(w3 + p)));
   }
-  r[0] = hsum(c0);
-  r[1] = hsum(c1);
-  r[2] = hsum(c2);
-  r[3] = hsum(c3);
+  r[0] = hsum_sse41(c0);
+  r[1] = hsum_sse41(c1);
+  r[2] = hsum_sse41(c2);
+  r[3] = hsum_sse41(c3);
 }
 
-void rayo_gemm_i8_x86(const rayo_i8 *RAYO_RESTRICT a, size_t lda, size_t m,
-                      const rayo_i8 *RAYO_RESTRICT w, size_t ldw, size_t n, size_t k,
-                      rayo_i32 *RAYO_RESTRICT c, size_t ldc) {
+RAYO_SSE41 void rayo_gemm_i8_sse41(const rayo_i8 *RAYO_RESTRICT a, size_t lda, size_t m,
+                                   const rayo_i8 *RAYO_RESTRICT w, size_t ldw, size_t n, size_t k,
+                                   rayo_i32 *RAYO_RESTRICT c, size_t ldc) {
   size_t i, j;
   for (i = 0; i < m; i++) {
     const rayo_i8 *a0 = a + i * lda;
-    for (j = 0; j + 4 <= n; j += 4) block1x4(a0, w + j * ldw, ldw, k, c + i * ldc + j);
+    for (j = 0; j + 4 <= n; j += 4) block1x4_sse41(a0, w + j * ldw, ldw, k, c + i * ldc + j);
     if (j < n) rayo_gemm_i8_generic(a0, lda, 1, w + j * ldw, ldw, n - j, k, c + i * ldc + j, ldc);
   }
 }
 
 /* 4-bit weights, as the AVX2 kernel, in two halves of 16. */
-static float dot_q4(const rayo_i8 *a, const float *as, const rayo_u8 *w, const float *ws,
-                    size_t groups) {
+RAYO_SSE41 static float dot_q4_sse41(const rayo_i8 *a, const float *as, const rayo_u8 *w,
+                                     const float *ws, size_t groups) {
   const __m128i low = _mm_set1_epi8(15), eight = _mm_set1_epi8(8), ones = _mm_set1_epi16(1);
   __m128 acc0 = _mm_setzero_ps(), acc1 = acc0;
   float lanes[8];
@@ -157,17 +190,18 @@ static float dot_q4(const rayo_i8 *a, const float *as, const rayo_u8 *w, const f
   return rayo_q4_lanes_sum(lanes);
 }
 
-#endif
-
-void rayo_gemm_q4_x86(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale, size_t m,
-                      const rayo_u8 *RAYO_RESTRICT w, const float *RAYO_RESTRICT wscale, size_t n,
-                      size_t k, float *RAYO_RESTRICT c, size_t ldc) {
+RAYO_SSE41 void rayo_gemm_q4_sse41(const rayo_i8 *RAYO_RESTRICT a,
+                                   const float *RAYO_RESTRICT ascale, size_t m,
+                                   const rayo_u8 *RAYO_RESTRICT w,
+                                   const float *RAYO_RESTRICT wscale, size_t n, size_t k,
+                                   float *RAYO_RESTRICT c, size_t ldc) {
   const size_t groups = k / RAYO_Q4_GROUP;
   size_t i, j;
   for (j = 0; j < n; j++) {
     const rayo_u8 *wj = w + j * (k / 2);
     const float *sj = wscale + j * groups;
-    for (i = 0; i < m; i++) c[i * ldc + j] = dot_q4(a + i * k, ascale + i * groups, wj, sj, groups);
+    for (i = 0; i < m; i++)
+      c[i * ldc + j] = dot_q4_sse41(a + i * k, ascale + i * groups, wj, sj, groups);
   }
 }
 

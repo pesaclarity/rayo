@@ -57,12 +57,23 @@ float rayo_q4_lanes_sum(const float *lanes);
 
 #if defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
 #define RAYO_KERNELS_X86 1
-#if defined(__AVX2__) || defined(__SSE4_1__)
+/* x86.c: SSE4.1 and AVX2, int8 by int8 and 4-bit weights by int8. With
+ * gcc or clang both are compiled (with target attributes) and chosen at run
+ * time; other compilers get what the build's flags target. */
+#if defined(__SSE4_1__) || defined(__GNUC__) || defined(__clang__)
 #define RAYO_KERNELS_X86_SIMD 1
-/* x86.c: SSE4.1 or AVX2 (whichever the build targets), int8 by int8, and
- * 4-bit weights by int8. */
-rayo_gemm_i8_fn rayo_gemm_i8_x86;
-rayo_gemm_q4_fn rayo_gemm_q4_x86;
+rayo_gemm_i8_fn rayo_gemm_i8_sse41;
+rayo_gemm_q4_fn rayo_gemm_q4_sse41;
+#if defined(__AVX2__) || defined(__GNUC__) || defined(__clang__)
+#define RAYO_KERNELS_X86_AVX2 1
+rayo_gemm_i8_fn rayo_gemm_i8_avx2;
+rayo_gemm_q4_fn rayo_gemm_q4_avx2;
+#endif
+#endif
+#if defined(__GNUC__) || defined(__clang__)
+/* Whether this CPU (and OS) runs SSE4.1, and AVX2 with FMA (x86_vnni.c). */
+rayo_bool rayo_cpu_has_sse41(void);
+rayo_bool rayo_cpu_has_avx2(void);
 #endif
 #if defined(__GNUC__) || defined(__clang__)
 #define RAYO_KERNELS_X86_VNNI 1

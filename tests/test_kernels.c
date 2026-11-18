@@ -139,6 +139,17 @@ void test_kernels(void) {
   check_q4(simd.gemm_q4, simd.name);
   check_q4(best.gemm_q4, best.name);
 #if defined(RAYO_KERNELS_X86_VNNI)
+  /* Each x86 set this CPU runs, whatever the build targets. */
+  if (rayo_cpu_has_sse41()) {
+    check_i8(rayo_gemm_i8_sse41, 0, "sse4.1 (run time)");
+    check_q4(rayo_gemm_q4_sse41, "sse4.1 (run time)");
+  }
+  if (rayo_cpu_has_avx2()) {
+    check_i8(rayo_gemm_i8_avx2, 0, "avx2 (run time)");
+    check_q4(rayo_gemm_q4_avx2, "avx2 (run time)");
+  }
+#endif
+#if defined(RAYO_KERNELS_X86_VNNI)
   if (!rayo_cpu_has_avxvnni()) printf("  avx-vnni: this CPU has none, not run\n");
 #endif
 #if defined(RAYO_KERNELS_NEON_DOTPROD)
