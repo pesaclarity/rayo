@@ -1,9 +1,9 @@
 {
   "kind": "rayo-bench-run",
   "schema": 1,
-  "commit": "9d46ee3d660190c255d58513d2e358031f57a283",
-  "date": "2026-11-18T08:47:33Z",
-  "run_url": "https://github.com/pesaclarity/rayo/actions/runs/44269079067",
+  "commit": "054c8311619f60b38fed07c8042cf9564e36126f",
+  "date": "2026-11-18T09:06:43Z",
+  "run_url": "https://github.com/pesaclarity/rayo/actions/runs/44271209897",
   "synthetic_note": "SmolLM2-135M shape with synthetic (random) weights, written by tool/make_synthetic_slm.py: every matrix product, the cache and the memory are the real model's size, but the text it writes means nothing.",
   "note": "GitHub-hosted runners are shared virtual machines: these numbers are indicative and vary from run to run. They are not a phone's.",
   "runners": [
@@ -12,30 +12,27 @@
       "runner": {
         "label": "ubuntu-24.04",
         "arch": "x86_64",
-        "cpu": "Intel(R) Xeon(R) 6975P-C",
+        "cpu": "AMD EPYC 7763 64-Core Processor",
         "cores": 4,
         "cpu_flags": [
           "sse4_1",
           "avx2",
-          "fma",
-          "avx_vnni",
-          "avx512f",
-          "avx512_vnni"
+          "fma"
         ],
         "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
         "cflags": "-O3 -mavx2 -mfma"
       },
-      "kernels": "avx-vnni",
+      "kernels": "avx2",
       "ask": {
         "reader": {
-          "per_question_median_ms": 0.15,
-          "per_question_p90_ms": 0.1576,
+          "per_question_median_ms": 0.2767,
+          "per_question_p90_ms": 0.288,
           "runs": 5
         },
         "writer": {
-          "per_reply_median_ms": 0.707,
-          "per_reply_p90_ms": 1.032,
-          "per_step_median_ms": 0.0537,
+          "per_reply_median_ms": 0.973,
+          "per_reply_p90_ms": 1.448,
+          "per_step_median_ms": 0.0751,
           "runs": 5
         }
       },
@@ -47,9 +44,9 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 187.2,
-          "decode_tok_s": 57.41,
-          "peak_rss_mb": 95.0,
+          "prompt_tok_s": 145.2,
+          "decode_tok_s": 82.06,
+          "peak_rss_mb": 94.9,
           "file_mb": 80.4,
           "runs": 3
         },
@@ -60,9 +57,9 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 295.0,
-          "decode_tok_s": 89.08,
-          "peak_rss_mb": 95.1,
+          "prompt_tok_s": 255.0,
+          "decode_tok_s": 138.78,
+          "peak_rss_mb": 95.0,
           "file_mb": 80.4,
           "runs": 3
         },
@@ -73,9 +70,9 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 504.5,
-          "decode_tok_s": 92.25,
-          "peak_rss_mb": 146.1,
+          "prompt_tok_s": 291.0,
+          "decode_tok_s": 63.49,
+          "peak_rss_mb": 146.0,
           "file_mb": 129.2,
           "runs": 3
         },
@@ -86,9 +83,9 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 693.1,
-          "decode_tok_s": 157.72,
-          "peak_rss_mb": 146.1,
+          "prompt_tok_s": 474.6,
+          "decode_tok_s": 110.39,
+          "peak_rss_mb": 146.0,
           "file_mb": 129.2,
           "runs": 3
         }
@@ -116,14 +113,14 @@
       "kernels": "neon-dotprod",
       "ask": {
         "reader": {
-          "per_question_median_ms": 0.2762,
-          "per_question_p90_ms": 0.2806,
+          "per_question_median_ms": 0.2764,
+          "per_question_p90_ms": 0.2794,
           "runs": 5
         },
         "writer": {
-          "per_reply_median_ms": 0.733,
-          "per_reply_p90_ms": 1.103,
-          "per_step_median_ms": 0.057,
+          "per_reply_median_ms": 0.72,
+          "per_reply_p90_ms": 1.087,
+          "per_step_median_ms": 0.0561,
           "runs": 5
         }
       },
@@ -135,8 +132,8 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 100.8,
-          "decode_tok_s": 62.68,
+          "prompt_tok_s": 101.2,
+          "decode_tok_s": 64.77,
           "peak_rss_mb": 94.3,
           "file_mb": 80.4,
           "runs": 3
@@ -148,9 +145,9 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 182.7,
-          "decode_tok_s": 102.58,
-          "peak_rss_mb": 94.3,
+          "prompt_tok_s": 183.8,
+          "decode_tok_s": 107.26,
+          "peak_rss_mb": 94.4,
           "file_mb": 80.4,
           "runs": 3
         },
@@ -161,8 +158,8 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 327.8,
-          "decode_tok_s": 72.67,
+          "prompt_tok_s": 332.3,
+          "decode_tok_s": 76.83,
           "peak_rss_mb": 145.4,
           "file_mb": 129.2,
           "runs": 3
@@ -174,8 +171,8 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 507.0,
-          "decode_tok_s": 115.03,
+          "prompt_tok_s": 509.9,
+          "decode_tok_s": 120.14,
           "peak_rss_mb": 145.3,
           "file_mb": 129.2,
           "runs": 3

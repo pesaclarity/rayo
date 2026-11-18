@@ -1,3 +1,5 @@
 date,commit,runner,arch,cpu,kernels,reader_ms,writer_ms,q4_prompt_tok_s_1t,q4_prompt_tok_s_2t,q4_decode_tok_s_1t,q4_decode_tok_s_2t,q4_peak_mb,int8_prompt_tok_s_1t,int8_prompt_tok_s_2t,int8_decode_tok_s_1t,int8_decode_tok_s_2t,int8_peak_mb,so_bytes
 2026-11-18T08:47:33Z,9d46ee3d660190c255d58513d2e358031f57a283,ubuntu-24.04,x86_64,Intel Xeon 6975P-C,avx-vnni,0.15,0.707,187.2,295.0,57.41,89.08,95.1,504.5,693.1,92.25,157.72,146.1,191024
 2026-11-18T08:47:33Z,9d46ee3d660190c255d58513d2e358031f57a283,ubuntu-24.04-arm,aarch64,Neoverse-N2,neon-dotprod,0.2762,0.733,100.8,182.7,62.68,102.58,94.3,327.8,507.0,72.67,115.03,145.4,199168
+2026-11-18T09:06:43Z,054c8311619f60b38fed07c8042cf9564e36126f,ubuntu-24.04,x86_64,AMD EPYC 7763 64-Core,avx2,0.2767,0.973,145.2,255.0,82.06,138.78,95.0,291.0,474.6,63.49,110.39,146.0,191024
+2026-11-18T09:06:43Z,054c8311619f60b38fed07c8042cf9564e36126f,ubuntu-24.04-arm,aarch64,Neoverse-N2,neon-dotprod,0.2764,0.72,101.2,183.8,64.77,107.26,94.4,332.3,509.9,76.83,120.14,145.4,199168
