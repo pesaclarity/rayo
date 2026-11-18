@@ -34,12 +34,13 @@ static RAYO_NEON_INLINE void neon_unpack_q3_stored(const rayo_u8 *g, int8x16_t *
   *wh = vreinterpretq_s8_u8(hi);
 }
 
-/* float16 scales to float32 four at a time, exactly as
- * rayo_half_to_float (kernels/half.h, included first): on arm64 with the
- * conversion instruction (exact for every float16; infinities and NaNs,
- * which rayo-convert never writes, made infinities as the generic kernel
- * makes them), on armv7 with integer operations. */
-static RAYO_NEON_INLINE void neon_half_row(const rayo_u16 *h, size_t n, float *out) {
+/* float16 scales to float32 four at a time, exactly as rayo_half_to_float
+ * (kernels/half.h, included first), out of line (it runs once a row of
+ * weights): on arm64 with the conversion instruction (exact for every
+ * float16; infinities and NaNs, which rayo-convert never writes, made
+ * infinities as the generic kernel makes them), on armv7 with integer
+ * operations. */
+static RAYO_NEON_NOINLINE void neon_half_row(const rayo_u16 *h, size_t n, float *out) {
   const uint32x4_t top = vdupq_n_u32(0x8000), inf = vdupq_n_u32(0x7f800000);
 #if !defined(__aarch64__)
   const uint32x4_t low15 = vdupq_n_u32(0x7fff), bias = vdupq_n_u32(0x38000000);

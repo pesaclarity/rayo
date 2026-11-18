@@ -74,11 +74,11 @@ static RAYO_Q_ATTR RAYO_NEON_INLINE float q_sum(float32x4_t lo, float32x4_t hi) 
 /* Rows a0 (and a1, with `two`) of activations by weight rows w .. w + 3
  * (`stride` bytes apart), with `st` holding the four rows' scales group by
  * group. */
-static RAYO_Q_ATTR RAYO_NEON_NOINLINE void q_block(const rayo_i8 *a0, const rayo_i8 *a1,
-                                                   const float *as0, const float *as1,
-                                                   rayo_bool two, const rayo_u8 *w, size_t stride,
-                                                   const float *st, size_t groups, size_t bytes,
-                                                   float *c0, float *c1) {
+static RAYO_Q_ATTR RAYO_NEON_INLINE void q_block_of(const rayo_i8 *a0, const rayo_i8 *a1,
+                                                    const float *as0, const float *as1,
+                                                    rayo_bool two, const rayo_u8 *w, size_t stride,
+                                                    const float *st, size_t groups, size_t bytes,
+                                                    float *c0, float *c1) {
   float32x4_t l00 = vdupq_n_f32(0.0f), h00 = l00, l01 = l00, h01 = l00, l02 = l00, h02 = l00;
   float32x4_t l03 = l00, h03 = l00, l10 = l00, h10 = l00, l11 = l00, h11 = l00, l12 = l00;
   float32x4_t h12 = l00, l13 = l00, h13 = l00;
@@ -126,6 +126,45 @@ static RAYO_Q_ATTR RAYO_NEON_NOINLINE void q_block(const rayo_i8 *a0, const rayo
     c1[1] = q_sum(l11, h11);
     c1[2] = q_sum(l12, h12);
     c1[3] = q_sum(l13, h13);
+  }
+}
+
+/* q_block_of specialised, out of line: 4-bit weights by one row and by
+ * two (the decoder's and the prompt's products, each with no test in its
+ * loop), and 3-bit weights by either. */
+static RAYO_Q_ATTR RAYO_NEON_NOINLINE void q4_block1(const rayo_i8 *a0, const float *as0,
+                                                     const rayo_u8 *w, size_t stride,
+                                                     const float *st, size_t groups, float *c0) {
+  q_block_of(a0, a0, as0, as0, RAYO_FALSE, w, stride, st, groups, RAYO_Q4_GROUP_BYTES, c0, c0);
+}
+
+static RAYO_Q_ATTR RAYO_NEON_NOINLINE void q4_block2(const rayo_i8 *a0, const rayo_i8 *a1,
+                                                     const float *as0, const float *as1,
+                                                     const rayo_u8 *w, size_t stride,
+                                                     const float *st, size_t groups, float *c0,
+                                                     float *c1) {
+  q_block_of(a0, a1, as0, as1, RAYO_TRUE, w, stride, st, groups, RAYO_Q4_GROUP_BYTES, c0, c1);
+}
+
+static RAYO_Q_ATTR RAYO_NEON_NOINLINE void q3_block(const rayo_i8 *a0, const rayo_i8 *a1,
+                                                    const float *as0, const float *as1,
+                                                    rayo_bool two, const rayo_u8 *w, size_t stride,
+                                                    const float *st, size_t groups, float *c0,
+                                                    float *c1) {
+  q_block_of(a0, a1, as0, as1, two, w, stride, st, groups, RAYO_Q3_GROUP_BYTES, c0, c1);
+}
+
+static RAYO_Q_ATTR RAYO_NEON_INLINE void q_block(const rayo_i8 *a0, const rayo_i8 *a1,
+                                                 const float *as0, const float *as1, rayo_bool two,
+                                                 const rayo_u8 *w, size_t stride, const float *st,
+                                                 size_t groups, size_t bytes, float *c0,
+                                                 float *c1) {
+  if (bytes == RAYO_Q3_GROUP_BYTES) {
+    q3_block(a0, a1, as0, as1, two, w, stride, st, groups, c0, c1);
+  } else if (two) {
+    q4_block2(a0, a1, as0, as1, w, stride, st, groups, c0, c1);
+  } else {
+    q4_block1(a0, as0, w, stride, st, groups, c0);
   }
 }
 
