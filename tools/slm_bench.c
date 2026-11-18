@@ -4,10 +4,12 @@
  *
  *   slm_bench MODEL.weights [P] [D] [threads] [--kv int8|float32]
  *             [--context N] [--chunk N] [--access normal|sequential|willneed|random]
+ *             [--kernels generic|simd|best]
  *
  * --context (default 1024) and --chunk (default 32) are at most the
- * model's. Prints prompt and decode tokens a second, the peak private
- * memory (the process's own) and mapped-file memory, and the peak RSS. */
+ * model's; --kernels (default best) picks the kernel set, as the Ask
+ * benchmarks do (simd: what an ARMv8.0 phone runs). Prints prompt and decode tokens a second, the
+ * peak private memory (the process's own) and mapped-file memory, and the peak RSS. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -79,7 +81,7 @@ int main(int argc, char **argv) {
   rayo_i32 num[4] = {0, 128, 64, 1};
   rayo_i32 prompt, decode, chunk = 32, context = 1024, vocab, i, at = 0, *ids;
   int a, positional = 0;
-  const char *path = NULL;
+  const char *path = NULL, *kernels = NULL;
   double t0, t_load, t_prompt, t_decode, rss_load;
   memset(&o, 0, sizeof o);
   memset(&mo, 0, sizeof mo);
@@ -90,6 +92,8 @@ int main(int argc, char **argv) {
       context = atoi(argv[++a]);
     } else if (strcmp(argv[a], "--chunk") == 0 && a + 1 < argc) {
       chunk = atoi(argv[++a]);
+    } else if (strcmp(argv[a], "--kernels") == 0 && a + 1 < argc) {
+      kernels = argv[++a];
     } else if (strcmp(argv[a], "--access") == 0 && a + 1 < argc) {
       const char *v = argv[++a];
       mo.access = strcmp(v, "normal") == 0       ? RAYO_ACCESS_NORMAL
@@ -106,7 +110,8 @@ int main(int argc, char **argv) {
   if (!path) {
     fprintf(stderr,
             "usage: slm_bench MODEL.weights [prompt] [decode] [threads] [--kv int8|float32] "
-            "[--context N] [--chunk N] [--access normal|sequential|willneed|random]\n");
+            "[--context N] [--chunk N] [--access normal|sequential|willneed|random] "
+            "[--kernels generic|simd|best]\n");
     return 2;
   }
   prompt = num[1];
@@ -143,6 +148,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "slm_bench: %s\n", msg.text);
     return 1;
   }
+  bench_choose_kernels(s, kernels);
   t_load = bench_now_ms() - t0;
   rss_load = peak_mb();
   sample();

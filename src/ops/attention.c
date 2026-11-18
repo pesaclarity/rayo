@@ -11,7 +11,11 @@
  * k and v may be int8 with a scale per row and group (a session's int8
  * cache, from cache_write): each group's products are summed in float32
  * over the int8 values and then scaled, `scale_g * sum(q[e] * k8[e])`, and
- * the weighted sum adds `(p_j * scale_g) * v8[e]`. */
+ * the weighted sum adds `(p_j * scale_g) * v8[e]`.
+ *
+ * The products q · k are summed in eight lanes (dimension e in lane e % 8)
+ * added in a fixed order, when a head's (or group's) size is a multiple of
+ * 8, else in order: the same on every build. */
 #include "core/mathx.h"
 #include "core/message.h"
 #include "ops/attrs.h"
@@ -79,6 +83,52 @@ static rayo_status infer(const void *params, const rayo_tensor *in, const rayo_i
   return RAYO_OK;
 }
 
+/* Sums of products over a head's dimensions: in eight lanes, added in a
+ * fixed order at the end, when the count is a multiple of 8 (the compiler
+ * vectorises them, and every build rounds the same way), else in order. */
+static float lanes8(const float *l) {
+  return ((l[0] + l[1]) + (l[2] + l[3])) + ((l[4] + l[5]) + (l[6] + l[7]));
+}
+
+static float dot_f32(const float *RAYO_RESTRICT x, const float *RAYO_RESTRICT y, size_t n) {
+  float l[8], acc = 0.0f;
+  size_t e, i;
+  if (n % 8 != 0) {
+    for (e = 0; e < n; e++) acc += x[e] * y[e];
+    return acc;
+  }
+  for (i = 0; i < 8; i++) l[i] = 0.0f;
+  for (e = 0; e < n; e += 8) {
+    for (i = 0; i < 8; i++) l[i] += x[e + i] * y[e + i];
+  }
+  return lanes8(l);
+}
+
+static float dot_i8(const float *RAYO_RESTRICT x, const rayo_i8 *RAYO_RESTRICT y, size_t n) {
+  float l[8], acc = 0.0f;
+  size_t e, i;
+  if (n % 8 != 0) {
+    for (e = 0; e < n; e++) acc += x[e] * (float)y[e];
+    return acc;
+  }
+  for (i = 0; i < 8; i++) l[i] = 0.0f;
+  for (e = 0; e < n; e += 8) {
+    for (i = 0; i < 8; i++) l[i] += x[e + i] * (float)y[e + i];
+  }
+  return lanes8(l);
+}
+
+/* out[e] += a * v[e] for e < n: apart, so the compiler vectorises it. */
+static void axpy_f32(float *RAYO_RESTRICT out, float a, const float *RAYO_RESTRICT v, size_t n) {
+  size_t e;
+  for (e = 0; e < n; e++) out[e] += a * v[e];
+}
+
+static void axpy_i8(float *RAYO_RESTRICT out, float a, const rayo_i8 *RAYO_RESTRICT v, size_t n) {
+  size_t e;
+  for (e = 0; e < n; e++) out[e] += a * (float)v[e];
+}
+
 /* One query, one head: out[0..hd) from keys and values 0 .. seen - 1, with
  * w (seen floats) for the weights. */
 static void attend(const float *qi, const float *k, const float *v, size_t d, size_t hd,
@@ -87,10 +137,7 @@ static void attend(const float *qi, const float *k, const float *v, size_t d, si
   float top = -RAYO_FLT_BIG, sum = 0.0f, inv;
   size_t j, e;
   for (j = 0; j < seen; j++) {
-    const float *kj = k + j * d;
-    float dot = 0.0f;
-    for (e = 0; e < hd; e++) dot += qi[e] * kj[e];
-    w[j] = dot * scale;
+    w[j] = dot_f32(qi, k + j * d, hd) * scale;
     top = w[j] > top ? w[j] : top;
   }
   for (j = 0; j < seen; j++) {
@@ -100,9 +147,7 @@ static void attend(const float *qi, const float *k, const float *v, size_t d, si
   inv = 1.0f / sum;
   for (e = 0; e < hd; e++) out[e] = 0.0f;
   for (j = 0; j < seen; j++) {
-    const float pj = w[j] * inv;
-    const float *vj = v + j * d;
-    for (e = 0; e < hd; e++) out[e] += pj * vj[e];
+    axpy_f32(out, w[j] * inv, v + j * d, hd);
   }
 }
 
@@ -118,11 +163,8 @@ static void attend_i8(const float *qi, const rayo_i8 *k, const float *ks, const 
   for (j = 0; j < seen; j++) {
     const rayo_i8 *kj = k + j * d + col;
     float dot = 0.0f;
-    for (b = 0; b < hd; b += sub) {
-      float part = 0.0f;
-      for (e = b; e < b + sub; e++) part += qi[e] * (float)kj[e];
-      dot += part * ks[j * per_row + (col + b) / group];
-    }
+    for (b = 0; b < hd; b += sub)
+      dot += dot_i8(qi + b, kj + b, sub) * ks[j * per_row + (col + b) / group];
     w[j] = dot * scale;
     top = w[j] > top ? w[j] : top;
   }
@@ -135,10 +177,8 @@ static void attend_i8(const float *qi, const rayo_i8 *k, const float *ks, const 
   for (j = 0; j < seen; j++) {
     const float pj = w[j] * inv;
     const rayo_i8 *vj = v + j * d + col;
-    for (b = 0; b < hd; b += sub) {
-      const float ps = pj * vs[j * per_row + (col + b) / group];
-      for (e = b; e < b + sub; e++) out[e] += ps * (float)vj[e];
-    }
+    for (b = 0; b < hd; b += sub)
+      axpy_i8(out + b, pj * vs[j * per_row + (col + b) / group], vj + b, sub);
   }
 }
 

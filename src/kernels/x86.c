@@ -199,15 +199,78 @@ RAYO_AVX2 static RAYO_INLINE void dot2_q_avx2(const rayo_i8 *a0, const rayo_i8 *
   *r1 = rayo_q4_lanes_sum(lanes);
 }
 
+#if RAYO_AVX2_DECODE
+/* One row of activations by four of weights (`stride` bytes apart, their
+ * scales in st[4 * g + r]): a decoder's product, four independent sums so
+ * the additions overlap. Each output's sums are exactly dot_q_avx2's. */
+RAYO_AVX2 static RAYO_INLINE void dot4_q_avx2(const rayo_i8 *a, const float *as, const rayo_u8 *w,
+                                              size_t stride, const float *st, size_t groups,
+                                              size_t bytes, float *c) {
+  __m256 acc0 = _mm256_setzero_ps(), acc1 = acc0, acc2 = acc0, acc3 = acc0;
+  float lanes[8];
+  size_t g;
+  for (g = 0; g < groups; g++) {
+    const rayo_u8 *wg = w + g * bytes;
+    const __m256i av = _mm256_loadu_si256((const __m256i *)(const void *)(a + g * 32));
+    const float s = as[g];
+#define RAYO_UNPACK(p) (bytes == RAYO_Q4_GROUP_BYTES ? unpack_q4_avx2(p) : unpack_q3_avx2(p))
+    acc0 = scaled_avx2(acc0, av, RAYO_UNPACK(wg), s * st[4 * g]);
+    acc1 = scaled_avx2(acc1, av, RAYO_UNPACK(wg + stride), s * st[4 * g + 1]);
+    acc2 = scaled_avx2(acc2, av, RAYO_UNPACK(wg + 2 * stride), s * st[4 * g + 2]);
+    acc3 = scaled_avx2(acc3, av, RAYO_UNPACK(wg + 3 * stride), s * st[4 * g + 3]);
+#undef RAYO_UNPACK
+  }
+  _mm256_storeu_ps(lanes, acc0);
+  c[0] = rayo_q4_lanes_sum(lanes);
+  _mm256_storeu_ps(lanes, acc1);
+  c[1] = rayo_q4_lanes_sum(lanes);
+  _mm256_storeu_ps(lanes, acc2);
+  c[2] = rayo_q4_lanes_sum(lanes);
+  _mm256_storeu_ps(lanes, acc3);
+  c[3] = rayo_q4_lanes_sum(lanes);
+}
+
+/* A decoder's single row of activations by 4-bit weights, four rows of
+ * them at a time: the outputs done (a multiple of four; none for rows of
+ * more than RAYO_SCALE_ROW groups). Out of line, one copy whatever the
+ * scales' type; 3-bit weights (rarer, larger to unpack) keep the row by
+ * row product, to keep the library small. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+RAYO_AVX2 static size_t
+decode_q_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_RESTRICT ascale,
+              const rayo_u8 *RAYO_RESTRICT w, const void *wscale, rayo_bool half, size_t n,
+              size_t k, float *RAYO_RESTRICT c) {
+  const size_t bytes = RAYO_Q4_GROUP_BYTES, groups = k / RAYO_Q4_GROUP;
+  float row[RAYO_SCALE_ROW], st[4 * RAYO_SCALE_ROW];
+  size_t j = 0, r, g;
+  if (groups > RAYO_SCALE_ROW) return 0;
+  for (; j + 4 <= n; j += 4) {
+    for (r = 0; r < 4; r++) {
+      const float *sr = (const float *)wscale + (j + r) * groups;
+      if (half) {
+        half_row_avx2((const rayo_u16 *)wscale + (j + r) * groups, groups, row);
+        sr = row;
+      }
+      for (g = 0; g < groups; g++) st[4 * g + r] = sr[g];
+    }
+    dot4_q_avx2(a, ascale, w + j * groups * bytes, groups * bytes, st, groups, bytes, c + j);
+  }
+  return j;
+}
+#endif
+
 RAYO_AVX2 static RAYO_INLINE void gemm_q_avx2(const rayo_i8 *RAYO_RESTRICT a,
                                               const float *RAYO_RESTRICT ascale, size_t m,
                                               const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                               rayo_bool half, size_t n, size_t k,
-                                              float *RAYO_RESTRICT c, size_t ldc, size_t bytes) {
+                                              float *RAYO_RESTRICT c, size_t ldc, size_t bytes,
+                                              size_t from) {
   const size_t groups = k / RAYO_Q4_GROUP;
   float row[RAYO_SCALE_ROW];
-  size_t i, j;
-  for (j = 0; j < n; j++) {
+  size_t i, j = from;
+  for (; j < n; j++) {
     const rayo_u8 *wj = w + j * groups * bytes;
     /* A row's float16 scales converted once, for all its groups and rows. */
     const rayo_bool conv = half && groups <= RAYO_SCALE_ROW;
@@ -229,10 +292,15 @@ RAYO_AVX2 void rayo_gemm_q4_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RA
                                  size_t m, const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                  rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
                                  size_t ldc) {
+#if RAYO_AVX2_DECODE
+  const size_t from = m == 1 ? decode_q_avx2(a, ascale, w, wscale, half, n, k, c) : 0;
+#else
+  const size_t from = 0;
+#endif
   if (half) {
-    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES, from);
   } else {
-    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES);
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q4_GROUP_BYTES, from);
   }
 }
 
@@ -240,10 +308,11 @@ RAYO_AVX2 void rayo_gemm_q3_avx2(const rayo_i8 *RAYO_RESTRICT a, const float *RA
                                  size_t m, const rayo_u8 *RAYO_RESTRICT w, const void *wscale,
                                  rayo_bool half, size_t n, size_t k, float *RAYO_RESTRICT c,
                                  size_t ldc) {
+  const size_t from = 0;
   if (half) {
-    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_TRUE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES, from);
   } else {
-    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES);
+    gemm_q_avx2(a, ascale, m, w, wscale, RAYO_FALSE, n, k, c, ldc, RAYO_Q3_GROUP_BYTES, from);
   }
 }
 #endif

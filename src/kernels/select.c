@@ -1,5 +1,6 @@
-/* Choosing kernels: what the build targets, plus the dot-product
- * instructions when this CPU has them (asked each time, never cached). */
+/* Choosing kernels: what the build targets, plus the dot-product and
+ * matrix instructions when this CPU has them (asked each time, never
+ * cached). */
 #include "kernels/kernels.h"
 
 void rayo_kernels_generic(rayo_kernels *out) {
@@ -61,6 +62,12 @@ void rayo_kernels_best(rayo_kernels *out) {
     out->gemm_i8 = rayo_gemm_i8_neon_dotprod;
     out->gemm_q4 = rayo_gemm_q4_neon_dotprod;
     out->gemm_q3 = rayo_gemm_q3_neon_dotprod;
+  }
+#endif
+#if defined(RAYO_KERNELS_NEON_I8MM)
+  if (rayo_cpu_has_i8mm()) {
+    out->name = "neon-i8mm";
+    out->gemm_i8 = rayo_gemm_i8_neon_i8mm;
   }
 #endif
 }

@@ -1,7 +1,7 @@
 /* The numeric kernels. Each has a portable C version (generic.c) and, where
  * the compiler targets it, SIMD ones (x86.c: SSE4.1 or AVX2; neon.c: NEON on
- * arm64 and armv7; x86_vnni.c and neon_dotprod.c: dot-product instructions
- * chosen at run time). The tests run every SIMD kernel against the generic
+ * arm64 and armv7; x86_vnni.c, neon_dotprod.c and neon_i8mm.c: dot-product
+ * and matrix instructions chosen at run time). The tests run every SIMD kernel against the generic
  * one. Only the SIMD files use compiler extensions (intrinsics, target
  * attributes, CPU checks); everything here is C89. */
 #ifndef RAYO_KERNELS_H
@@ -85,6 +85,19 @@ rayo_gemm_q4_fn rayo_gemm_q3_sse41;
 rayo_gemm_i8_fn rayo_gemm_i8_avx2;
 rayo_gemm_q4_fn rayo_gemm_q4_avx2;
 rayo_gemm_q4_fn rayo_gemm_q3_avx2;
+/* The AVX2 decoder product (a single row by four weight rows, x86.c) is
+ * left out of Android builds, to keep the x86_64 library within CI's
+ * 200 KB budget: Android on x86_64 is emulators and a few Chromebooks,
+ * not phones, and without it a decoder's row takes the row by row product,
+ * the same floats a little slower. -DRAYO_AVX2_DECODE=1 puts it back, =0
+ * leaves it out elsewhere. */
+#if !defined(RAYO_AVX2_DECODE)
+#if defined(__ANDROID__)
+#define RAYO_AVX2_DECODE 0
+#else
+#define RAYO_AVX2_DECODE 1
+#endif
+#endif
 #endif
 #endif
 #if defined(__GNUC__) || defined(__clang__)
@@ -113,8 +126,13 @@ rayo_gemm_q4_fn rayo_gemm_q3_neon;
 rayo_gemm_i8_fn rayo_gemm_i8_neon_dotprod;
 rayo_gemm_q4_fn rayo_gemm_q4_neon_dotprod;
 rayo_gemm_q4_fn rayo_gemm_q3_neon_dotprod;
-/* Whether this CPU has the dot product (Linux and Android only, else no). */
+/* Whether this CPU has the dot product (Linux, Android and macOS, else no). */
 rayo_bool rayo_cpu_has_dotprod(void);
+#define RAYO_KERNELS_NEON_I8MM 1
+/* neon_i8mm.c: SMMLA (ARMv8.6 int8 matrix multiply), chosen at run time. */
+rayo_gemm_i8_fn rayo_gemm_i8_neon_i8mm;
+/* Whether this CPU has the int8 matrix multiply and the dot product. */
+rayo_bool rayo_cpu_has_i8mm(void);
 #endif
 #endif
 

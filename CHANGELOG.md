@@ -41,6 +41,15 @@ Written from the conventional commit titles on `main` at each release.
     `tool/make_malformed.py`); the clang static analyzer and cppcheck (`tool/ci/analyze.sh`,
     the `analyze` job).
 
+- Faster on phones, the same floats: a thread pool whose workers take parts from a shared
+  counter (no wait for late workers, a bounded spin); attention's q · k in eight lanes; NEON
+  and SDOT 4-bit and 3-bit products four weight rows at a time; int8 products with the
+  ARMv8.6 int8 matrix multiply (SMMLA, `neon-i8mm`, chosen at run time); a decoder's single
+  row by eight weight rows with SDOT and AVX-VNNI, and by four with AVX2 (left out of Android
+  builds, `RAYO_AVX2_DECODE`, to keep the x86_64 library within 200 KB). Every kernel is
+  checked against the generic one, bit for bit, on the blocks' leftover shapes; the
+  `bench-compare` CI job times a pull request's base and head on one runner.
+
 - The same floats from every build: rayo is compiled with `-ffp-contract=off` everywhere (the
   Makefile, the CI scripts, the Dart build hook, rayo-convert's `Library.build`), so clang no
   longer fuses multiplies and adds into FMAs on its own. A `clang -O3 -mavx2 -mfma` build now

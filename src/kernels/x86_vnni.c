@@ -52,6 +52,19 @@ RAYO_VNNI static void block2x4(const rayo_i8 *a0, const rayo_i8 *a1, const rayo_
   r1[3] = hsum(c13);
 }
 
+/* One row by eight: a decoder's single token, every vpdpbusd used. */
+RAYO_VNNI static void block1x8(const rayo_i8 *a0, const rayo_i8 *w, size_t ldw, size_t k,
+                               rayo_i32 *r) {
+  __m256i c[8];
+  size_t p, j;
+  for (j = 0; j < 8; j++) c[j] = _mm256_setzero_si256();
+  for (p = 0; p < k; p += 32) {
+    const __m256i x = load(a0 + p);
+    for (j = 0; j < 8; j++) c[j] = _mm256_dpbusd_avx_epi32(c[j], x, load(w + j * ldw + p));
+  }
+  for (j = 0; j < 8; j++) r[j] = hsum(c[j]);
+}
+
 /* One output, `a` read as uint8. */
 static rayo_i32 dot_u8i8(const rayo_i8 *a, const rayo_i8 *w, size_t k) {
   const rayo_u8 *u = (const rayo_u8 *)(const void *)a;
@@ -76,11 +89,13 @@ RAYO_VNNI void rayo_gemm_u8i8_avxvnni(const rayo_i8 *RAYO_RESTRICT a, size_t lda
     }
   }
   for (; i < m; i++) {
-    /* The last row of an odd count (a decoder's one token): the two-row
-     * block on it twice, the second copy dropped. */
+    /* The last row of an odd count (a decoder's one token): eight rows of
+     * weights at a time, then the two-row block on it twice for four, the
+     * second copy dropped. */
     const rayo_i8 *a0 = a + i * lda;
     rayo_i32 spare[4];
-    for (j = 0; j + 4 <= n; j += 4) block2x4(a0, a0, w + j * ldw, ldw, k, c + i * ldc + j, spare);
+    for (j = 0; j + 8 <= n; j += 8) block1x8(a0, w + j * ldw, ldw, k, c + i * ldc + j);
+    for (; j + 4 <= n; j += 4) block2x4(a0, a0, w + j * ldw, ldw, k, c + i * ldc + j, spare);
     for (; j < n; j++) c[i * ldc + j] = dot_u8i8(a0, w + j * ldw, k);
   }
 }
