@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from . import __version__, attention, passes
+from . import __version__, attention, passes, quantise
 from .ir import ConvertError, Graph
 from .lower import Lowered, Lowerer, SequenceError, Weight
 from .naming import Namer
@@ -30,6 +30,11 @@ class Options:
     attention: bool = True  # recognise attention blocks
     input_shapes: dict[str, tuple[int, ...]] = field(default_factory=dict)
     metadata: dict[str, Any] | None = None
+    # float32: the weights as the source holds them (a TFLite dynamic-range model's int8 too);
+    # int8: the float32 weights quantised by the converter (quantise.py)
+    weights: str = "float32"
+    int8_tensors: tuple[str, ...] = quantise.CLASSES  # with int8: which classes
+    int8_min_size: int = quantise.MIN_SIZE  # with int8: smaller weights stay float32
 
 
 @dataclass
@@ -57,14 +62,24 @@ def convert_file(path: str | Path, options: Options | None = None) -> Result:
     return convert(raw, p.name, options)
 
 
-def convert(raw: bytes, file_name: str, options: Options | None = None) -> Result:
+def convert(raw: bytes, file_name: str, options: Options | None = None,
+            graph: Graph | None = None) -> Result:
+    """``raw`` (the file ``file_name``) converted. ``graph``: the file already read, when the
+    caller has changed it (the tests turn a dynamic-range model back into floats)."""
     opts = options or Options()
-    g = read_model(raw, file_name)
+    if opts.weights not in ("float32", "int8"):
+        raise ConvertError(f"--weights {opts.weights}: a TFLite or ONNX model takes float32 "
+                           "or int8 (q4 is for language models)")
+    g = graph if graph is not None else read_model(raw, file_name)
     notes = Notes()
     names = {i: g.input_names.get(i) or g.tensors[i].name for i in g.inputs}
     out_names = {i: g.output_names.get(i) or g.tensors[i].name for i in g.outputs}
     passes.check_ops(g)
     passes.fold(g)
+    if opts.weights == "int8":
+        for line in quantise.apply(g, quantise.Int8(tuple(opts.int8_tensors),
+                                                    opts.int8_min_size)):
+            notes.add(line)
     overrides = {}
     for i in g.inputs:
         if names[i] in opts.input_shapes:

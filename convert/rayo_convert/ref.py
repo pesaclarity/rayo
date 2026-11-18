@@ -3,7 +3,8 @@
 It is the converter's reference: constant folding, the shapes of every tensor, the index
 tracing that recognises attention, and the tests' expected outputs. int8 weights run as
 TFLite's dynamic-range ("hybrid") kernels do: the float input quantised to int8 on the fly
-(asymmetrically, per row for FULLY_CONNECTED, per batch item for CONV_2D), the product exact.
+(asymmetrically, per row for FULLY_CONNECTED, per batch item for CONV_2D, and per dilation
+phase for a CONV_2D marked ``input_phases``, as rayo's dilated conv1d), the product exact.
 """
 
 from __future__ import annotations
@@ -209,7 +210,14 @@ def _conv2d(g: Graph, o: Op, a: list[Any]) -> list[np.ndarray]:
     dh, dw = int(opt.get("dilation_h_factor", 1)), int(opt.get("dilation_w_factor", 1))
     n, h, wd, c = x.shape
     oc, kh, kw, _ = w.shape
-    if _hybrid(g, o, 1):
+    if _hybrid(g, o, 1) and opt.get("input_phases") and dw > 1:
+        # rayo's dilated conv1d (and TFLite's SPACE_TO_BATCH_ND form): each phase alone
+        q = np.zeros(x.shape, np.float64)
+        for b in range(n):
+            for p in range(dw):
+                q[b, :, p::dw, :] = quantised(x[b, :, p::dw, :])
+        x = q
+    elif _hybrid(g, o, 1):
         x = np.stack([quantised(b) for b in x]).astype(np.float64)
     else:
         x = x.astype(np.float64)
