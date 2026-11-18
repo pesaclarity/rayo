@@ -18,7 +18,7 @@
 <text x="32.0" y="58.0" class="brand" text-anchor="start">rayo</text>
 <circle cx="115.9" cy="55.0" r="4" class="accent"/>
 <text x="32.0" y="80.0" class="muted" text-anchor="start">On-device inference in plain C89 · live benchmarks</text>
-<text x="868.0" y="58.0" class="meta" text-anchor="end">2026-11-18 · commit 054c831</text>
+<text x="868.0" y="58.0" class="meta" text-anchor="end">2026-11-18 · commit b7838f6</text>
 <text x="868.0" y="80.0" class="muted" text-anchor="end">GitHub Actions · ubuntu-24.04 runners</text>
 <rect x="32" y="94.0" width="836" height="2" class="accent"/>
 <text x="382.0" y="124.0" class="th" text-anchor="start">x86_64</text>
@@ -28,53 +28,53 @@
 <rect x="32" y="156.0" width="836" height="26" class="band"/>
 <text x="42.0" y="173.0" class="section" text-anchor="start">MACHINE</text>
 <text x="42.0" y="203.0" class="label" text-anchor="start">CPU</text>
-<text x="382.0" y="203.0" class="num" text-anchor="start">AMD EPYC 7763 64-Core</text>
+<text x="382.0" y="203.0" class="num" text-anchor="start">Intel Xeon 6975P-C</text>
 <text x="630.0" y="203.0" class="num" text-anchor="start">Neoverse-N2</text>
 <rect x="32" y="213.0" width="836" height="1" class="line"/>
 <text x="42.0" y="235.0" class="label" text-anchor="start">Kernels chosen at run time</text>
-<text x="382.0" y="235.0" class="num" text-anchor="start">avx2</text>
+<text x="382.0" y="235.0" class="num" text-anchor="start">avx-vnni</text>
 <text x="630.0" y="235.0" class="num" text-anchor="start">neon-dotprod</text>
 <rect x="32" y="245.0" width="836" height="1" class="line"/>
 <rect x="32" y="246.0" width="836" height="26" class="band"/>
 <text x="42.0" y="263.0" class="section" text-anchor="start">PESA CLARITY&#x27;S ASK MODELS · INT8 · 1 THREAD · MEDIAN</text>
 <text x="42.0" y="293.0" class="label" text-anchor="start">Reader, per question</text>
-<text x="382.0" y="293.0" class="num" text-anchor="start">0.28 ms</text>
+<text x="382.0" y="293.0" class="num" text-anchor="start">0.15 ms</text>
 <text x="630.0" y="293.0" class="num" text-anchor="start">0.28 ms</text>
 <rect x="32" y="303.0" width="836" height="1" class="line"/>
 <text x="42.0" y="325.0" class="label" text-anchor="start">Writer, per reply (≈13 tokens)</text>
-<text x="382.0" y="325.0" class="num" text-anchor="start">0.97 ms</text>
-<text x="630.0" y="325.0" class="num" text-anchor="start">0.72 ms</text>
+<text x="382.0" y="325.0" class="num" text-anchor="start">0.72 ms</text>
+<text x="630.0" y="325.0" class="num" text-anchor="start">0.80 ms</text>
 <rect x="32" y="335.0" width="836" height="1" class="line"/>
 <rect x="32" y="336.0" width="836" height="26" class="band"/>
 <text x="42.0" y="353.0" class="section" text-anchor="start">SMOLLM2-135M SHAPE · SYNTHETIC WEIGHTS† · 128-TOKEN PROMPT, 64 DECODED</text>
 <text x="42.0" y="383.0" class="label" text-anchor="start">q4 prompt tokens/s (1 / 2 threads)</text>
-<text x="382.0" y="383.0" class="num" text-anchor="start">145 / 255</text>
-<text x="630.0" y="383.0" class="num" text-anchor="start">101 / 184</text>
+<text x="382.0" y="383.0" class="num" text-anchor="start">188 / 296</text>
+<text x="630.0" y="383.0" class="num" text-anchor="start">99.4 / 177</text>
 <rect x="32" y="393.0" width="836" height="1" class="line"/>
 <text x="42.0" y="415.0" class="label" text-anchor="start">q4 decode tokens/s (1 / 2 threads)</text>
-<text x="382.0" y="415.0" class="num" text-anchor="start">82.1 / 139</text>
-<text x="630.0" y="415.0" class="num" text-anchor="start">64.8 / 107</text>
+<text x="382.0" y="415.0" class="num" text-anchor="start">88.0 / 144</text>
+<text x="630.0" y="415.0" class="num" text-anchor="start">51.8 / 87.5</text>
 <rect x="32" y="425.0" width="836" height="1" class="line"/>
 <text x="42.0" y="447.0" class="label" text-anchor="start">q4 peak memory</text>
-<text x="382.0" y="447.0" class="num" text-anchor="start">95 MB</text>
-<text x="630.0" y="447.0" class="num" text-anchor="start">94 MB</text>
+<text x="382.0" y="447.0" class="num" text-anchor="start">86 MB</text>
+<text x="630.0" y="447.0" class="num" text-anchor="start">85 MB</text>
 <rect x="32" y="457.0" width="836" height="1" class="line"/>
 <text x="42.0" y="479.0" class="label" text-anchor="start">int8 prompt tokens/s (1 / 2 threads)</text>
-<text x="382.0" y="479.0" class="num" text-anchor="start">291 / 475</text>
-<text x="630.0" y="479.0" class="num" text-anchor="start">332 / 510</text>
+<text x="382.0" y="479.0" class="num" text-anchor="start">470 / 654</text>
+<text x="630.0" y="479.0" class="num" text-anchor="start">306 / 454</text>
 <rect x="32" y="489.0" width="836" height="1" class="line"/>
 <text x="42.0" y="511.0" class="label" text-anchor="start">int8 decode tokens/s (1 / 2 threads)</text>
-<text x="382.0" y="511.0" class="num" text-anchor="start">63.5 / 110</text>
-<text x="630.0" y="511.0" class="num" text-anchor="start">76.8 / 120</text>
+<text x="382.0" y="511.0" class="num" text-anchor="start">98.8 / 160</text>
+<text x="630.0" y="511.0" class="num" text-anchor="start">67.8 / 97.9</text>
 <rect x="32" y="521.0" width="836" height="1" class="line"/>
 <text x="42.0" y="543.0" class="label" text-anchor="start">int8 peak memory</text>
-<text x="382.0" y="543.0" class="num" text-anchor="start">146 MB</text>
-<text x="630.0" y="543.0" class="num" text-anchor="start">145 MB</text>
+<text x="382.0" y="543.0" class="num" text-anchor="start">145 MB</text>
+<text x="630.0" y="543.0" class="num" text-anchor="start">144 MB</text>
 <rect x="32" y="553.0" width="836" height="1" class="line"/>
 <rect x="32" y="554.0" width="836" height="26" class="band"/>
 <text x="42.0" y="571.0" class="section" text-anchor="start">LIBRARY SIZE · STRIPPED · WHOLE RUNTIME WITH THE LANGUAGE-MODEL PATH</text>
 <text x="42.0" y="601.0" class="label" text-anchor="start">Android library (.so)</text>
-<text x="382.0" y="601.0" class="num" text-anchor="start">arm64-v8a 152 KB · armeabi-v7a 123 KB · x86_64 168 KB</text>
+<text x="382.0" y="601.0" class="num" text-anchor="start">arm64-v8a 174 KB · armeabi-v7a 139 KB · x86_64 193 KB</text>
 <rect x="32" y="611.0" width="836" height="1" class="line"/>
 <text x="32.0" y="639.0" class="small" text-anchor="start">† SmolLM2-135M shape with synthetic (random) weights, written by tool/make_synthetic_slm.py: every matrix product, the cache and</text>
 <text x="32.0" y="656.0" class="small" text-anchor="start">the memory are the real model&#x27;s size, but the text it writes means nothing. GitHub-hosted runners are shared virtual machines:</text>

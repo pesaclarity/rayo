@@ -1,9 +1,9 @@
 {
   "kind": "rayo-bench-run",
   "schema": 1,
-  "commit": "054c8311619f60b38fed07c8042cf9564e36126f",
-  "date": "2026-11-18T09:06:43Z",
-  "run_url": "https://github.com/pesaclarity/rayo/actions/runs/44271209897",
+  "commit": "b7838f6648e8f100674d0e70412c092bb2c6bb6d",
+  "date": "2026-11-18T09:22:38Z",
+  "run_url": "https://github.com/pesaclarity/rayo/actions/runs/44274420673",
   "synthetic_note": "SmolLM2-135M shape with synthetic (random) weights, written by tool/make_synthetic_slm.py: every matrix product, the cache and the memory are the real model's size, but the text it writes means nothing.",
   "note": "GitHub-hosted runners are shared virtual machines: these numbers are indicative and vary from run to run. They are not a phone's.",
   "runners": [
@@ -12,27 +12,30 @@
       "runner": {
         "label": "ubuntu-24.04",
         "arch": "x86_64",
-        "cpu": "AMD EPYC 7763 64-Core Processor",
+        "cpu": "Intel(R) Xeon(R) 6975P-C",
         "cores": 4,
         "cpu_flags": [
           "sse4_1",
           "avx2",
-          "fma"
+          "fma",
+          "avx_vnni",
+          "avx512f",
+          "avx512_vnni"
         ],
         "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
         "cflags": "-O3 -mavx2 -mfma"
       },
-      "kernels": "avx2",
+      "kernels": "avx-vnni",
       "ask": {
         "reader": {
-          "per_question_median_ms": 0.2767,
-          "per_question_p90_ms": 0.288,
+          "per_question_median_ms": 0.1468,
+          "per_question_p90_ms": 0.1544,
           "runs": 5
         },
         "writer": {
-          "per_reply_median_ms": 0.973,
-          "per_reply_p90_ms": 1.448,
-          "per_step_median_ms": 0.0751,
+          "per_reply_median_ms": 0.717,
+          "per_reply_p90_ms": 1.046,
+          "per_step_median_ms": 0.055,
           "runs": 5
         }
       },
@@ -44,10 +47,10 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 145.2,
-          "decode_tok_s": 82.06,
-          "peak_rss_mb": 94.9,
-          "file_mb": 80.4,
+          "prompt_tok_s": 187.5,
+          "decode_tok_s": 87.96,
+          "peak_rss_mb": 86.1,
+          "file_mb": 72.4,
           "runs": 3
         },
         {
@@ -57,10 +60,10 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 255.0,
-          "decode_tok_s": 138.78,
-          "peak_rss_mb": 95.0,
-          "file_mb": 80.4,
+          "prompt_tok_s": 295.9,
+          "decode_tok_s": 144.5,
+          "peak_rss_mb": 86.0,
+          "file_mb": 72.4,
           "runs": 3
         },
         {
@@ -70,9 +73,9 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 291.0,
-          "decode_tok_s": 63.49,
-          "peak_rss_mb": 146.0,
+          "prompt_tok_s": 469.8,
+          "decode_tok_s": 98.82,
+          "peak_rss_mb": 145.0,
           "file_mb": 129.2,
           "runs": 3
         },
@@ -83,14 +86,14 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 474.6,
-          "decode_tok_s": 110.39,
-          "peak_rss_mb": 146.0,
+          "prompt_tok_s": 654.3,
+          "decode_tok_s": 159.8,
+          "peak_rss_mb": 144.9,
           "file_mb": 129.2,
           "runs": 3
         }
       ],
-      "library_so_bytes": 191024
+      "library_so_bytes": 211520
     },
     {
       "schema": 1,
@@ -113,14 +116,14 @@
       "kernels": "neon-dotprod",
       "ask": {
         "reader": {
-          "per_question_median_ms": 0.2764,
-          "per_question_p90_ms": 0.2794,
+          "per_question_median_ms": 0.2759,
+          "per_question_p90_ms": 0.279,
           "runs": 5
         },
         "writer": {
-          "per_reply_median_ms": 0.72,
-          "per_reply_p90_ms": 1.087,
-          "per_step_median_ms": 0.0561,
+          "per_reply_median_ms": 0.803,
+          "per_reply_p90_ms": 1.185,
+          "per_step_median_ms": 0.0617,
           "runs": 5
         }
       },
@@ -132,10 +135,10 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 101.2,
-          "decode_tok_s": 64.77,
-          "peak_rss_mb": 94.3,
-          "file_mb": 80.4,
+          "prompt_tok_s": 99.4,
+          "decode_tok_s": 51.82,
+          "peak_rss_mb": 85.4,
+          "file_mb": 72.4,
           "runs": 3
         },
         {
@@ -145,10 +148,10 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 183.8,
-          "decode_tok_s": 107.26,
-          "peak_rss_mb": 94.4,
-          "file_mb": 80.4,
+          "prompt_tok_s": 177.2,
+          "decode_tok_s": 87.53,
+          "peak_rss_mb": 85.4,
+          "file_mb": 72.4,
           "runs": 3
         },
         {
@@ -158,9 +161,9 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 332.3,
-          "decode_tok_s": 76.83,
-          "peak_rss_mb": 145.4,
+          "prompt_tok_s": 306.5,
+          "decode_tok_s": 67.79,
+          "peak_rss_mb": 144.3,
           "file_mb": 129.2,
           "runs": 3
         },
@@ -171,22 +174,22 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 509.9,
-          "decode_tok_s": 120.14,
-          "peak_rss_mb": 145.3,
+          "prompt_tok_s": 454.2,
+          "decode_tok_s": 97.9,
+          "peak_rss_mb": 144.3,
           "file_mb": 129.2,
           "runs": 3
         }
       ],
-      "library_so_bytes": 199168
+      "library_so_bytes": 199184
     }
   ],
   "library_sizes": {
     "source": "android-ndk",
     "bytes": {
-      "arm64-v8a": 155120,
-      "armeabi-v7a": 125336,
-      "x86_64": 171072
+      "arm64-v8a": 177760,
+      "armeabi-v7a": 142108,
+      "x86_64": 197512
     }
   }
 }
