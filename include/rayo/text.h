@@ -32,8 +32,7 @@ RAYO_API rayo_status rayo_tokenizer_create(const char *json, size_t size, rayo_t
                                            rayo_message *msg);
 
 /* The same, from the file at `path`. */
-RAYO_API rayo_status rayo_tokenizer_load(const char *path, rayo_tokenizer **out,
-                                         rayo_message *msg);
+RAYO_API rayo_status rayo_tokenizer_load(const char *path, rayo_tokenizer **out, rayo_message *msg);
 
 RAYO_API void rayo_tokenizer_destroy(rayo_tokenizer *tokenizer);
 

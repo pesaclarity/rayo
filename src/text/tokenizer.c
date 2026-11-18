@@ -919,9 +919,9 @@ static void unigram_word(encoder *e, const char *w, size_t n) {
       /* Unknown characters in a row are one unknown token, as the
        * tokenizers library fuses them. */
     } else {
-      last_unk = RAYO_TRUE;
       rayo_i32 tmp[8];
       size_t c = 0, j;
+      last_unk = RAYO_TRUE;
       unknown(e, (const unsigned char *)w + e->from[at], (size_t)(at - e->from[at]), tmp, &c);
       for (j = c; j > 0; j--) e->sym[count++] = tmp[j - 1];
     }
