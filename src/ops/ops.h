@@ -42,5 +42,9 @@ extern const rayo_op rayo_op_masked_reduce; /* ops/pool.c */
 extern const rayo_op rayo_op_compare;       /* ops/compare.c */
 extern const rayo_op rayo_op_custom;        /* ops/custom.c: a program's own op */
 extern const rayo_op rayo_op_softmax;       /* ops/softmax.c */
+extern const rayo_op rayo_op_silu;          /* ops/elementwise.c: unary */
+extern const rayo_op rayo_op_rms_norm;      /* ops/decoder.c */
+extern const rayo_op rayo_op_rope;          /* ops/decoder.c */
+extern const rayo_op rayo_op_swiglu;        /* ops/decoder.c */
 
 #endif

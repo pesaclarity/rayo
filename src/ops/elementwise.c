@@ -182,12 +182,13 @@ typedef enum unary_kind {
   UN_RELU,
   UN_RELU6,
   UN_GELU_ERF,
-  UN_GELU_TANH
+  UN_GELU_TANH,
+  UN_SILU
 } unary_kind;
 
-static const unary_kind unary_kinds[] = {UN_NEG,   UN_ABS,      UN_SQUARE,   UN_SQRT,    UN_RSQRT,
-                                         UN_EXP,   UN_LOG,      UN_TANH,     UN_SIGMOID, UN_RELU,
-                                         UN_RELU6, UN_GELU_ERF, UN_GELU_TANH};
+static const unary_kind unary_kinds[] = {UN_NEG,   UN_ABS,      UN_SQUARE,    UN_SQRT,    UN_RSQRT,
+                                         UN_EXP,   UN_LOG,      UN_TANH,      UN_SIGMOID, UN_RELU,
+                                         UN_RELU6, UN_GELU_ERF, UN_GELU_TANH, UN_SILU};
 
 static float unary(unary_kind k, float x) {
   switch (k) {
@@ -215,6 +216,8 @@ static float unary(unary_kind k, float x) {
       return x > 0.0f ? (x < 6.0f ? x : 6.0f) : 0.0f;
     case UN_GELU_ERF:
       return 0.5f * x * (1.0f + rayo_erff(x * 0.70710678118654752f));
+    case UN_SILU:
+      return rayo_silu(x);
     case UN_GELU_TANH:
       return (float)(0.5 * x *
                      (1.0 + tanh(0.79788456080286535588 * (x + 0.044715 * (double)x * x * x))));
@@ -275,3 +278,4 @@ UNARY_OP(rayo_op_relu, relu_prepare, "relu", UN_RELU)
 UNARY_OP(rayo_op_relu6, relu6_prepare, "relu6", UN_RELU6)
 UNARY_OP(rayo_op_gelu_erf, gelu_erf_prepare, "gelu_erf", UN_GELU_ERF)
 UNARY_OP(rayo_op_gelu_tanh, gelu_tanh_prepare, "gelu_tanh", UN_GELU_TANH)
+UNARY_OP(rayo_op_silu, silu_prepare, "silu", UN_SILU)

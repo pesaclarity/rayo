@@ -1,5 +1,6 @@
 #include "ops/attrs.h"
 
+#include <math.h>
 #include <string.h>
 
 #include "core/message.h"
@@ -74,6 +75,8 @@ rayo_status rayo_attr_activation(const rayo_op_spec *spec, rayo_activation *out,
     *out = RAYO_ACT_RELU;
   } else if (strcmp(s, "gelu_erf") == 0) {
     *out = RAYO_ACT_GELU_ERF;
+  } else if (strcmp(s, "silu") == 0) {
+    *out = RAYO_ACT_SILU;
   } else {
     return rayo_fail(msg, RAYO_ERR_UNSUPPORTED, "node %s: activation %s", spec->output, s);
   }
@@ -131,4 +134,8 @@ rayo_status rayo_attr_sizes(const rayo_op_spec *spec, const char *key, rayo_i32 
     }
   }
   return RAYO_OK;
+}
+
+float rayo_silu(float x) {
+  return (float)((double)x / (1.0 + exp(-(double)x)));
 }

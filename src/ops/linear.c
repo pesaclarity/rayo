@@ -92,6 +92,8 @@ static float activate(rayo_activation act, float v) {
       return v < 0.0f ? 0.0f : v;
     case RAYO_ACT_GELU_ERF:
       return 0.5f * v * (1.0f + rayo_erff(v * 0.70710678118654752f));
+    case RAYO_ACT_SILU:
+      return rayo_silu(v);
     case RAYO_ACT_NONE:
       break;
   }

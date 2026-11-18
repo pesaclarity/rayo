@@ -19,9 +19,9 @@ static rayo_status prepare(const rayo_op_spec *spec, rayo_arena *arena, const vo
     return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: gather takes a [rows, width] table and ids",
                      spec->output);
   }
-  if (t->dtype == RAYO_DTYPE_I8 && t->axis != -1) {
-    return rayo_fail(msg, RAYO_ERR_UNSUPPORTED, "node %s: an int8 table needs one scale",
-                     spec->output);
+  if (t->dtype == RAYO_DTYPE_I8 && t->axis != -1 && t->axis != 0) {
+    return rayo_fail(msg, RAYO_ERR_UNSUPPORTED,
+                     "node %s: an int8 table needs one scale, or one per row", spec->output);
   }
   p = rayo_arena_alloc(arena, sizeof *p);
   if (!p) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
@@ -61,12 +61,25 @@ static rayo_status run(const void *params, const rayo_tensor *in, rayo_tensor *o
   if (p->table->dtype == RAYO_DTYPE_F32) {
     const float *t = p->table->data;
     for (i = 0; i < n; i++) memcpy(y + i * w, t + (size_t)ids[i] * w, w * sizeof(float));
+  } else if (p->table->dtype == RAYO_DTYPE_I4) {
+    /* Groups of RAYO_PCWT_INT4_GROUP along the row, two values a byte. */
+    const rayo_u8 *t = p->table->data;
+    const size_t g = (size_t)p->table->group_size, groups = w / g;
+    for (i = 0; i < n; i++) {
+      const rayo_u8 *row = t + (size_t)ids[i] * (w / 2);
+      const float *sc = p->table->scales + (size_t)ids[i] * groups;
+      for (j = 0; j < w; j++) {
+        const rayo_u8 b = row[j / g * (g / 2) + j % (g / 2)];
+        const int v = (j % g < g / 2 ? b & 15 : b >> 4) - 8;
+        y[i * w + j] = (float)v * sc[j / g];
+      }
+    }
   } else {
     const rayo_i8 *t = p->table->data;
-    const float s = p->table->scales[0];
     const rayo_i32 z = p->table->zero_point;
     for (i = 0; i < n; i++) {
       const rayo_i8 *row = t + (size_t)ids[i] * w;
+      const float s = p->table->scales[p->table->axis == 0 ? (size_t)ids[i] : 0];
       for (j = 0; j < w; j++) y[i * w + j] = (float)(row[j] - z) * s;
     }
   }
