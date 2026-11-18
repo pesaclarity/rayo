@@ -22,6 +22,11 @@ else
   tool/ci/sanitize.sh cc
 fi
 if command -v gcc >/dev/null && command -v clang >/dev/null; then tool/ci/builds.sh; fi
+if command -v clang >/dev/null; then
+  tool/ci/fuzz.sh replay clang -fsanitize=address,undefined -fno-sanitize-recover=all
+  tool/ci/fuzz.sh run 10
+  tool/ci/analyze.sh
+fi
 tool/ci/erf.sh cc
 tool/ci/chat.sh cc
 if [ -n "${ANDROID_NDK_HOME:-}" ]; then tool/ci/android.sh; fi

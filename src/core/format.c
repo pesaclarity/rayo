@@ -1,5 +1,7 @@
 #include "core/format.h"
 
+#include "core/small_begin.h"
+
 typedef struct sink {
   char *out;
   size_t size;
@@ -75,3 +77,5 @@ void rayo_vformat(char *out, size_t size, const char *fmt, va_list ap) {
   }
   if (size) out[s.at] = '\0';
 }
+
+#include "core/small_end.h"

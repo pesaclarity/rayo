@@ -3,7 +3,10 @@
 #include <string.h>
 
 #include "core/message.h"
+#include "rayo/config.h"
 #include "text/unicode.h"
+
+#include "core/small_begin.h"
 
 typedef enum rx_kind { RX_CHAR, RX_CLASS, RX_ANY, RX_SEQ, RX_ALT, RX_REPEAT, RX_LOOK } rx_kind;
 
@@ -17,6 +20,8 @@ typedef struct rx_item {
 
 #define RX_MAX_ITEMS 32
 #define RX_MAX_KIDS 64
+#define RX_MAX_GROUPS 16 /* groups nested */
+#define RX_MAX_DEPTH 512 /* the matcher's recursion, a few frames a level */
 
 struct rayo_rx_node {
   rx_kind kind;
@@ -37,6 +42,7 @@ typedef struct parser {
   rayo_arena *arena;
   rayo_message *msg;
   rayo_status status;
+  int groups; /* open now */
 } parser;
 
 static rayo_rx_node *fail(parser *p, const char *what) {
@@ -219,7 +225,9 @@ static rayo_rx_node *parse_atom(parser *p, rayo_bool icase) {
         return fail(p, "a group kind");
       }
     }
+    if (++p->groups > RX_MAX_GROUPS) return fail(p, "groups nested too deeply");
     n = parse_alt(p, ic);
+    p->groups--;
     if (!n) return NULL;
     if (peek(p) != ')') return fail(p, "a group without )");
     p->at++;
@@ -350,6 +358,12 @@ rayo_status rayo_regex_compile(const char *pattern, rayo_arena *arena, rayo_rege
   p.arena = arena;
   p.msg = msg;
   p.status = RAYO_OK;
+  p.groups = 0;
+  if (p.n > RAYO_MAX_PATTERN_BYTES) {
+    return rayo_fail(msg, RAYO_ERR_LIMIT,
+                     "tokenizer pattern: %lu bytes, at most %d (RAYO_MAX_PATTERN_BYTES)",
+                     (unsigned long)p.n, RAYO_MAX_PATTERN_BYTES);
+  }
   root = parse_alt(&p, RAYO_FALSE);
   if (root && more(&p)) root = fail(&p, "an unmatched )");
   if (!root) return p.status != RAYO_OK ? p.status : RAYO_ERR_UNSUPPORTED;
@@ -416,11 +430,13 @@ typedef struct rx_cont {
 typedef struct rx_text {
   const rayo_u32 *s;
   size_t n;
+  long *budget; /* steps left */
+  int depth;    /* the matcher's recursion now */
 } rx_text;
 
-static long match(const rx_text *t, const rayo_rx_node *n, size_t at, const rx_cont *k);
+static long match(rx_text *t, const rayo_rx_node *n, size_t at, const rx_cont *k);
 
-static long rest(const rx_text *t, const rx_cont *k, size_t at) {
+static long rest(rx_text *t, const rx_cont *k, size_t at) {
   rx_cont c;
   if (!k) return (long)at;
   if (k->index >= k->seq->kid_count) return rest(t, k->next, at);
@@ -430,7 +446,7 @@ static long rest(const rx_text *t, const rx_cont *k, size_t at) {
   return match(t, k->seq->kids[k->index], at, &c);
 }
 
-static long match(const rx_text *t, const rayo_rx_node *n, size_t at, const rx_cont *k) {
+static long match_node(rx_text *t, const rayo_rx_node *n, size_t at, const rx_cont *k) {
   long e;
   int i;
   switch (n->kind) {
@@ -448,7 +464,7 @@ static long match(const rx_text *t, const rayo_rx_node *n, size_t at, const rx_c
     case RX_ALT:
       for (i = 0; i < n->kid_count; i++) {
         e = match(t, n->kids[i], at, k);
-        if (e >= 0) return e;
+        if (e >= 0 || e == RAYO_REGEX_TOO_COSTLY) return e;
       }
       return -1;
     case RX_REPEAT: {
@@ -457,23 +473,40 @@ static long match(const rx_text *t, const rayo_rx_node *n, size_t at, const rx_c
              one(n->child, t->s[at + run])) {
         run++;
       }
+      *t->budget -= (long)run;
       for (;;) {
         if ((long)run < n->min) return -1;
+        if (--*t->budget < 0) return RAYO_REGEX_TOO_COSTLY;
         e = rest(t, k, at + run);
-        if (e >= 0 || run == 0) return e;
+        if (e >= 0 || e == RAYO_REGEX_TOO_COSTLY || run == 0) return e;
         run--;
       }
     }
     case RX_LOOK:
       e = match(t, n->child, at, NULL);
+      if (e == RAYO_REGEX_TOO_COSTLY) return e;
       return (e >= 0) != n->negate ? rest(t, k, at) : -1;
   }
   return -1;
 }
 
-long rayo_regex_match(const rayo_regex *rx, const rayo_u32 *text, size_t n, size_t at) {
+static long match(rx_text *t, const rayo_rx_node *n, size_t at, const rx_cont *k) {
+  long e;
+  if (--*t->budget < 0 || t->depth >= RX_MAX_DEPTH) return RAYO_REGEX_TOO_COSTLY;
+  t->depth++;
+  e = match_node(t, n, at, k);
+  t->depth--;
+  return e;
+}
+
+long rayo_regex_match(const rayo_regex *rx, const rayo_u32 *text, size_t n, size_t at,
+                      long *budget) {
   rx_text t;
   t.s = text;
   t.n = n;
+  t.budget = budget;
+  t.depth = 0;
   return match(&t, rx->root, at, NULL);
 }
+
+#include "core/small_end.h"

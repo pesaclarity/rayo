@@ -28,7 +28,7 @@ void test_arena(void) {
 }
 
 static rayo_status parse(rayo_arena *a, const char *text, rayo_json **out) {
-  return rayo_json_parse(text, strlen(text), a, out, NULL);
+  return rayo_json_parse(text, strlen(text), (size_t)-1, a, out, NULL);
 }
 
 void test_json(void) {
@@ -57,7 +57,7 @@ void test_json(void) {
   for (k = 0; k < sizeof bad / sizeof bad[0]; k++) EXPECT(parse(&a, bad[k], &v) == RAYO_ERR_FORMAT);
   memset(deep, '[', 100);
   memset(deep + 100, ']', 100);
-  EXPECT(rayo_json_parse(deep, 200, &a, &v, NULL) == RAYO_ERR_FORMAT);
+  EXPECT(rayo_json_parse(deep, 200, (size_t)-1, &a, &v, NULL) == RAYO_ERR_FORMAT);
   rayo_arena_free(&a);
 }
 

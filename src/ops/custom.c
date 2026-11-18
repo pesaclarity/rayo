@@ -45,8 +45,9 @@ static void view_of(const rayo_tensor *t, rayo_tensor_view *v) {
   v->shape = t->shape;
   v->data = t->data;
   v->bytes = t->data ? rayo_tensor_bytes(t) : 0;
-  if (t->data && t->dtype == RAYO_DTYPE_I4) v->bytes = t->weight->count / 2;
-  if (t->data && t->dtype == RAYO_DTYPE_I3) {
+  /* int4 and int3 tensors are only ever weights. */
+  if (t->weight && t->dtype == RAYO_DTYPE_I4) v->bytes = t->weight->count / 2;
+  if (t->weight && t->dtype == RAYO_DTYPE_I3) {
     v->bytes = t->weight->count / RAYO_PCWT_INT4_GROUP * RAYO_PCWT_INT3_GROUP_BYTES;
   }
 }

@@ -23,10 +23,16 @@ void *rayo_aligned_alloc(size_t size) {
   if (size == 0 || size > RAYO_SIZE_MAX - RAYO_ALIGN - sizeof(void *)) return NULL;
   /* calloc, not malloc and memset: a large block comes zeroed from the
    * system, and its pages cost memory only once they are written. */
+  /* Room for the data, the alignment and the original pointer: the size
+   * of a pointer is meant (cppcheck's pointerSize). */
+  /* cppcheck-suppress pointerSize */
   raw = (unsigned char *)calloc(1, size + RAYO_ALIGN + sizeof(void *));
   if (!raw) return NULL;
   p = (unsigned char *)rayo_align_pointer(raw + sizeof(void *), RAYO_ALIGN);
   memcpy(p - sizeof(void *), &raw, sizeof raw);
+  /* Not a leak: `raw` is stored just before `p`, and rayo_aligned_free
+   * frees it from there. */
+  /* cppcheck-suppress memleak */
   return p;
 }
 

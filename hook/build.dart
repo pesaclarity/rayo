@@ -56,6 +56,15 @@ void main(List<String> args) async {
         // by default, and with -mfma emits FMA instructions): the same
         // floats as every other build of rayo, whatever the target's flags.
         '-ffp-contract=off',
+        // Hardening (docs/SECURITY.md): stack canaries, the C library's
+        // checked copies where sizes are known, and no format string that
+        // is not a literal; on ELF, RELRO, BIND_NOW and a stack that cannot
+        // be executed (below). tool/ci/dart.sh checks the built library.
+        '-fstack-protector-strong',
+        '-U_FORTIFY_SOURCE',
+        '-D_FORTIFY_SOURCE=2',
+        '-Wformat',
+        '-Wformat-security',
         // Kernels for the target's SIMD. The dot-product kernels (AVX-VNNI,
         // ARM SDOT) are compiled with target attributes and chosen at run
         // time, so the baseline stays what every phone of the ABI runs.

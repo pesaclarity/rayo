@@ -78,7 +78,8 @@ static rayo_status infer(const void *params, const rayo_tensor *in, const rayo_i
   out->dtype = RAYO_DTYPE_F32;
   out->shape = *q;
   *scratch = 0;
-  rayo_scratch_add(scratch, (size_t)p->heads * (size_t)k->dims[0] * sizeof(float));
+  rayo_scratch_add(scratch,
+                   rayo_scratch_bytes((size_t)p->heads, (size_t)k->dims[0], sizeof(float)));
   return RAYO_OK;
 }
 

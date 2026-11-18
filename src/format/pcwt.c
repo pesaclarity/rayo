@@ -3,6 +3,9 @@
 #include <string.h>
 
 #include "core/message.h"
+#include "rayo/config.h"
+
+#include "core/small_begin.h"
 
 static const rayo_u8 magic[4] = {'P', 'C', 'W', 'T'};
 
@@ -167,16 +170,16 @@ static rayo_status read_tensor(const rayo_json *t, const rayo_u8 *data, size_t d
 }
 
 static rayo_status read_tensors(const rayo_json *tensors, const rayo_u8 *data, size_t data_size,
-                                rayo_weight *weights, size_t end, rayo_message *msg) {
-  size_t i, j;
+                                rayo_weight *weights, rayo_names *names, size_t end,
+                                rayo_message *msg) {
+  size_t i;
   for (i = 0; i < tensors->length; i++) {
+    rayo_i32 *slot;
     rayo_status s = read_tensor(tensors->items[i], data, data_size, &weights[i], &end, msg);
     if (s != RAYO_OK) return s;
-    for (j = 0; j < i; j++) {
-      if (strcmp(weights[j].name, weights[i].name) == 0) {
-        return rayo_fail(msg, RAYO_ERR_FORMAT, "tensor %s twice", weights[i].name);
-      }
-    }
+    slot = rayo_names_slot(names, weights[i].name);
+    if (*slot >= 0) return rayo_fail(msg, RAYO_ERR_FORMAT, "tensor %s twice", weights[i].name);
+    *slot = (rayo_i32)i;
   }
   if (end != data_size) return rayo_fail(msg, RAYO_ERR_FORMAT, "data after the last tensor");
   return RAYO_OK;
@@ -204,7 +207,13 @@ rayo_status rayo_pcwt_read(const rayo_u8 *file, size_t size, rayo_arena *arena, 
   if (header_len > size - 12 || (12 + (size_t)header_len) % 4 != 0) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "bad header length");
   }
-  s = rayo_json_parse((const char *)file + 12, header_len, arena, &header, msg);
+  if (header_len > (rayo_u32)RAYO_MAX_HEADER_BYTES) {
+    return rayo_fail(msg, RAYO_ERR_LIMIT,
+                     "a header of %lu bytes, at most %ld (RAYO_MAX_HEADER_BYTES)",
+                     (unsigned long)header_len, (long)RAYO_MAX_HEADER_BYTES);
+  }
+  s = rayo_json_parse((const char *)file + 12, header_len, (size_t)RAYO_MAX_HEADER_VALUES, arena,
+                      &header, msg);
   if (s != RAYO_OK) return s;
   if (!rayo_json_as_int(rayo_json_get(header, "format_version"), &hv) || (rayo_u32)hv != version) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "header and file disagree on the format version");
@@ -213,9 +222,15 @@ rayo_status rayo_pcwt_read(const rayo_u8 *file, size_t size, rayo_arena *arena, 
   if (!tensors || tensors->kind != RAYO_JSON_ARRAY) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "no tensors in the header");
   }
+  if (tensors->length > (size_t)RAYO_MAX_TENSORS) {
+    return rayo_fail(msg, RAYO_ERR_LIMIT, "%lu tensors, at most %ld (RAYO_MAX_TENSORS)",
+                     (unsigned long)tensors->length, (long)RAYO_MAX_TENSORS);
+  }
   weights = (rayo_weight *)rayo_arena_array(arena, tensors->length ? tensors->length : 1,
                                             sizeof *weights);
-  if (!weights) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
+  if (!weights || !rayo_names_init(&out->names, tensors->length, arena)) {
+    return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
+  }
   /* The tokeniser's table, {"offset", "bytes"} in the data, if any. */
   {
     const rayo_json *tok = rayo_json_get(header, "tokenizer");
@@ -232,7 +247,8 @@ rayo_status rayo_pcwt_read(const rayo_u8 *file, size_t size, rayo_arena *arena, 
       tok_end = (size_t)offset + (size_t)bytes;
     }
   }
-  s = read_tensors(tensors, file + 12 + header_len, size - 12 - header_len, weights, tok_end, msg);
+  s = read_tensors(tensors, file + 12 + header_len, size - 12 - header_len, weights, &out->names,
+                   tok_end, msg);
   if (s != RAYO_OK) return s;
   out->header = header;
   out->model = rayo_json_as_string(rayo_json_get(header, "model"));
@@ -242,9 +258,8 @@ rayo_status rayo_pcwt_read(const rayo_u8 *file, size_t size, rayo_arena *arena, 
 }
 
 const rayo_weight *rayo_pcwt_find(const rayo_pcwt *pcwt, const char *name) {
-  size_t i;
-  for (i = 0; i < pcwt->weight_count; i++) {
-    if (strcmp(pcwt->weights[i].name, name) == 0) return &pcwt->weights[i];
-  }
-  return NULL;
+  const rayo_i32 i = pcwt->names.keys ? rayo_names_get(&pcwt->names, name) : -1;
+  return i >= 0 ? &pcwt->weights[i] : NULL;
 }
+
+#include "core/small_end.h"

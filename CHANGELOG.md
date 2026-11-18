@@ -4,6 +4,43 @@ Written from the conventional commit titles on `main` at each release.
 
 ## Unreleased
 
+- Hardened against untrusted model files and text (docs/SECURITY.md):
+  - **Fixed:** a bind that failed left a node's output without its memory, so the next run
+    wrote through NULL plus an offset; the tokeniser read freed memory on texts over about 128 bytes with a
+    byte-level or Metaspace pre-tokeniser (it copied bytes of a buffer into the same buffer
+    while growing it), and gave wrong ids for them; a session's plan could wrap around on
+    32-bit systems (armeabi-v7a) for a crafted graph and give a buffer smaller than its
+    offsets; a convolution's or attention's scratch size could wrap there too; a Unigram
+    score that is not finite (or huge) left positions unreachable and read ids never
+    written; a tokenizer.json with one huge id made rayo allocate and zero gigabytes.
+  - **Limits** in `include/rayo/config.h` on what one file or text can make rayo allocate or
+    compute (header bytes and values, tensors, nodes, symbols, a session's arena,
+    tokenizer.json bytes and values, vocabulary, text, patterns and their backtracking), and a
+    new status for going over one, `RAYO_ERR_LIMIT`. Graph and tensor names resolve through a
+    hash table, BPE merges in O(n log n) (a long word was quadratic), and a tokeniser's
+    pattern runs on a budget of steps (one that backtracks catastrophically fails instead of
+    hanging); its groups nest at most 16 deep.
+  - JSON strings must be UTF-8; numbers are read whatever the C locale; mapped files must be
+    regular files, opened with `O_CLOEXEC`; the Dart package decodes names leniently and
+    frees a model whose metadata it cannot read.
+  - **Signed models:** `rayo_verify`, `rayo_verify_file` and `rayo_model_options.integrity`
+    (`include/rayo/verify.h`) check a file's SHA-256 and Ed25519 signature (RFC 8032) before
+    rayo reads it, with rayo's own SHA-512 and Ed25519 (c25519, public domain,
+    `LICENSES/c25519.txt`), and `RAYO_ERR_INTEGRITY`; in Dart, `RayoIntegrity`,
+    `integrity:` on `RayoModel.load`, `loadFile` and `map`, `rayoVerify`, `rayoVerifyFile`;
+    `tool/sign_model.py` makes keys and signs. Bindings that declare `rayo_model_options`
+    themselves must add the `integrity` pointer (rayo-convert's runtime does).
+  - **Hardened builds:** `-fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wformat-security`
+    everywhere, RELRO, BIND_NOW and a non-executable stack for the shared libraries, checked
+    with readelf (`tool/ci/elf_check.sh`) on the Android libraries and the Dart hook's. Load-time
+    code (parsers, checks, verification) is compiled for size, so the Android libraries stay
+    within 200 KB.
+  - **Checked in CI:** libFuzzer targets for the loader and graph, the tokeniser's table,
+    tokenizer.json and text (`tests/fuzz`, `tool/ci/fuzz.sh`, the `fuzz` job); a corpus of
+    malformed files with their expected statuses (`tests/malformed`,
+    `tool/make_malformed.py`); the clang static analyzer and cppcheck (`tool/ci/analyze.sh`,
+    the `analyze` job).
+
 - The same floats from every build: rayo is compiled with `-ffp-contract=off` everywhere (the
   Makefile, the CI scripts, the Dart build hook, rayo-convert's `Library.build`), so clang no
   longer fuses multiplies and adds into FMAs on its own. A `clang -O3 -mavx2 -mfma` build now

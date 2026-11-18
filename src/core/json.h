@@ -33,10 +33,13 @@ struct rayo_json {
 };
 
 /* Parses the `size` bytes at `text` (one JSON value, then only whitespace).
- * RAYO_ERR_FORMAT with a message for anything else; nesting deeper than 32
- * is refused. */
-rayo_status rayo_json_parse(const char *text, size_t size, rayo_arena *arena, rayo_json **out,
-                            rayo_message *msg);
+ * RAYO_ERR_FORMAT with a message for anything else, strings that are not
+ * UTF-8 included; nesting deeper than RAYO_JSON_MAX_DEPTH is refused, and
+ * more than `max_values` values (numbers, strings, lists, objects) is
+ * RAYO_ERR_LIMIT, which bounds the arena the tree takes (about 100 bytes a
+ * value). */
+rayo_status rayo_json_parse(const char *text, size_t size, size_t max_values, rayo_arena *arena,
+                            rayo_json **out, rayo_message *msg);
 
 /* Member `key` of an OBJECT, or NULL (also when `obj` is NULL or not an
  * object). */

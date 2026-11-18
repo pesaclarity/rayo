@@ -2,7 +2,7 @@
  * otherwise (or when asked). */
 #if !defined(RAYO_NO_PLATFORM) && (defined(__unix__) || defined(__APPLE__))
 #define RAYO_MAP_POSIX 1
-#define _POSIX_C_SOURCE 200112L
+#define _POSIX_C_SOURCE 200809L
 #elif !defined(RAYO_NO_PLATFORM) && defined(_WIN32)
 #define RAYO_MAP_WINDOWS 1
 #endif
@@ -19,9 +19,16 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(O_CLOEXEC)
+#define RAYO_O_CLOEXEC O_CLOEXEC
+#else
+#define RAYO_O_CLOEXEC 0
+#endif
 #elif defined(RAYO_MAP_WINDOWS)
 #include <windows.h>
 #endif
+
+#include "core/small_begin.h"
 
 static rayo_status read_whole(const char *path, rayo_file_map *out, rayo_message *msg) {
   FILE *f = fopen(path, "rb");
@@ -60,12 +67,17 @@ rayo_status rayo_map_file(const char *path, rayo_bool read, rayo_file_map *out, 
   if (!read) {
     struct stat st;
     void *p;
-    const int fd = open(path, O_RDONLY);
+    /* Read-only, not inherited by programs this process starts. */
+    const int fd = open(path, O_RDONLY | RAYO_O_CLOEXEC);
     if (fd < 0) return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "cannot open %s", path);
-    if (fstat(fd, &st) != 0 || st.st_size <= 0 || (double)st.st_size > (double)RAYO_SIZE_MAX) {
+    /* A regular file only: a device or a pipe has no size to check. */
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
+        (double)st.st_size > (double)RAYO_SIZE_MAX) {
       close(fd);
       return rayo_fail(msg, RAYO_ERR_FORMAT, "%s: an empty file or not a file", path);
     }
+    /* Read-only and private: the weights can never be written through the
+     * mapping, nor executed. */
     p = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd); /* the mapping keeps the file */
     if (p != MAP_FAILED) {
@@ -126,3 +138,5 @@ void rayo_unmap_file(rayo_file_map *map) {
   }
   memset(map, 0, sizeof *map);
 }
+
+#include "core/small_end.h"

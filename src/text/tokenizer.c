@@ -9,12 +9,16 @@
 #include <string.h>
 
 #include "core/arena.h"
+#include "core/compat.h"
 #include "core/message.h"
 #include "model.h"
+#include "rayo/config.h"
 #include "rayo/text.h"
 #include "text/regex.h"
 #include "text/table.h"
 #include "text/unicode.h"
+
+#include "core/small_begin.h"
 
 /* GPT-2's byte-level pre-tokeniser pattern (ByteLevel with use_regex). */
 static const char gpt2_pattern[] =
@@ -55,6 +59,7 @@ struct rayo_tokenizer {
   size_t vocab_mask, merge_mask; /* slots - 1; merge_mask 0: no merges */
   const unsigned char *vocab, *merges, *pieces, *scores, *added, *byte_ids, *pool;
   size_t added_count, pool_bytes;
+  unsigned char added_first[256]; /* whether an added token starts with the byte */
   pre_step pre[TT_MAX_STEPS];
   int pre_count;
   norm_step norm[TT_MAX_STEPS];
@@ -182,6 +187,7 @@ static rayo_status check_table(rayo_tokenizer *t, rayo_message *msg) {
    * end each probe. */
   {
     rayo_bool empty = RAYO_FALSE;
+    size_t longest = 0;
     for (i = 0; i < vslots; i++) {
       const unsigned char *e = t->vocab + i * 12;
       const rayo_i32 id = rdi(e + 8);
@@ -190,9 +196,14 @@ static rayo_status check_table(rayo_tokenizer *t, rayo_message *msg) {
       } else if (id >= t->vocab_size || !in_pool(t, rd(e), rd(e + 4))) {
         return rayo_fail(msg, RAYO_ERR_FORMAT, "tokeniser table: vocabulary slot %lu",
                          (unsigned long)i);
+      } else if (rd(e + 4) > longest) {
+        longest = rd(e + 4);
       }
     }
     if (!empty) return rayo_fail(msg, RAYO_ERR_FORMAT, "tokeniser table: a full vocabulary");
+    /* The Unigram model tries every length up to the longest token's: no
+     * more than the vocabulary's own longest, whatever the header says. */
+    if (t->max_len > longest) t->max_len = longest;
     empty = mslots == 0;
     for (i = 0; i < mslots; i++) {
       const unsigned char *e = t->merges + i * 16;
@@ -216,6 +227,18 @@ static rayo_status check_table(rayo_tokenizer *t, rayo_message *msg) {
     if (!in_pool(t, rd(e), rd(e + 4)) || rd(e + 4) == 0 || rdi(e + 8) < 0 ||
         rdi(e + 8) >= t->vocab_size) {
       return rayo_fail(msg, RAYO_ERR_FORMAT, "tokeniser table: added token %lu", (unsigned long)i);
+    }
+    t->added_first[t->pool[rd(e)]] = 1;
+  }
+  /* Unigram scores are log probabilities: finite, and small enough that a
+   * word's sums stay finite, so every character is reachable. */
+  if (!(t->min_score >= -1.0e6f && t->min_score <= 1.0e6f)) {
+    return rayo_fail(msg, RAYO_ERR_FORMAT, "tokeniser table: the lowest score");
+  }
+  for (i = 0; t->unigram && i < (size_t)t->vocab_size; i++) {
+    const float sc = score_of(t, (rayo_i32)i);
+    if (!(sc >= -1.0e6f && sc <= 1.0e6f)) {
+      return rayo_fail(msg, RAYO_ERR_FORMAT, "tokeniser table: score %lu", (unsigned long)i);
     }
   }
   for (i = 0; i < 256; i++) {
@@ -301,25 +324,43 @@ static rayo_status open_table(const unsigned char *table, size_t size, unsigned 
 typedef struct buffer {
   char *data;
   size_t len, cap;
-  rayo_bool failed;
+  rayo_bool failed;   /* out of memory, or over RAYO_MAX_TEXT_BYTES */
+  rayo_bool too_long; /* over RAYO_MAX_TEXT_BYTES */
 } buffer;
 
-static void buf_add(buffer *b, const char *s, size_t n) {
-  if (b->failed) return;
-  if (b->len + n > b->cap) {
-    size_t cap = b->cap ? b->cap * 2 : 256;
-    char *p;
-    while (cap < b->len + n) cap *= 2;
-    p = realloc(b->data, cap);
-    if (!p) {
-      b->failed = RAYO_TRUE;
-      return;
-    }
-    b->data = p;
-    b->cap = cap;
+/* Room for n more bytes, the whole at most RAYO_MAX_TEXT_BYTES. */
+static rayo_bool buf_reserve(buffer *b, size_t n) {
+  size_t cap;
+  char *p;
+  if (b->failed) return RAYO_FALSE;
+  if (n > (size_t)RAYO_MAX_TEXT_BYTES - b->len) {
+    b->failed = b->too_long = RAYO_TRUE;
+    return RAYO_FALSE;
   }
+  if (b->len + n <= b->cap) return RAYO_TRUE;
+  cap = b->cap ? b->cap : 256;
+  while (cap < b->len + n) cap *= 2; /* below 2 * RAYO_MAX_TEXT_BYTES */
+  p = realloc(b->data, cap);
+  if (!p) {
+    b->failed = RAYO_TRUE;
+    return RAYO_FALSE;
+  }
+  b->data = p;
+  b->cap = cap;
+  return RAYO_TRUE;
+}
+
+/* Appends the n bytes at s, which must not be in b. */
+static void buf_add(buffer *b, const char *s, size_t n) {
+  if (!buf_reserve(b, n)) return;
   if (n) memcpy(b->data + b->len, s, n);
   b->len += n;
+}
+
+/* Appends b's own byte at `at`: by offset, since growing may move it. */
+static void buf_repeat(buffer *b, size_t at) {
+  if (!buf_reserve(b, 1)) return;
+  b->data[b->len++] = b->data[at];
 }
 
 /* Words: [start, end) byte ranges of a buffer. */
@@ -459,14 +500,26 @@ rayo_i32 rayo_tokenizer_find(const rayo_tokenizer *tokenizer, const char *token)
 
 /* ---- encoding -------------------------------------------------------------------------------- */
 
+/* A possible merge for the BPE model: the pair (a, b) at symbol `at` and
+ * the one after it, of rank `rank`. */
+typedef struct merge {
+  rayo_i32 rank, at, a, b;
+} merge;
+
 typedef struct encoder {
   const rayo_tokenizer *t;
   rayo_i32 *ids;
   size_t cap, count;
   rayo_bool failed;
+  rayo_bool over; /* a limit of rayo/config.h, not memory */
   /* Working memory, reused across words. */
-  rayo_i32 *sym;
+  rayo_i32 *sym; /* a word's symbols (-1: merged away) */
   size_t sym_cap;
+  rayo_i32 *link; /* BPE: each symbol's previous and next (-1: none) */
+  rayo_i32 *prev, *next;
+  size_t link_cap;
+  merge *heap; /* BPE: the merges, lowest rank first, then leftmost */
+  size_t heap_cap;
   rayo_u32 *cps;
   size_t *cp_at;
   size_t cp_cap;
@@ -481,13 +534,25 @@ static void emit(encoder *e, rayo_i32 id) {
   e->count++;
 }
 
+/* `p` (of `*cap` elements of `size` bytes) grown to at least `n`
+ * elements; NULL, and `p` left as it is, when out of memory. */
+static void *grow(void *p, size_t *cap, size_t n, size_t size) {
+  void *q;
+  if (n <= *cap) return p;
+  if (n > RAYO_SIZE_MAX / size) return NULL;
+  q = realloc(p, n * size);
+  if (q) *cap = n;
+  return q;
+}
+
+/* Room for a word of n bytes: it never has more symbols than bytes. */
 static rayo_bool grow_syms(encoder *e, size_t n) {
-  rayo_i32 *p;
-  if (n <= e->sym_cap) return RAYO_TRUE;
-  p = realloc(e->sym, n * sizeof *p);
-  if (!p) return RAYO_FALSE;
+  rayo_i32 *p = (rayo_i32 *)grow(e->sym, &e->sym_cap, n + 1, sizeof *e->sym);
+  if (!p) {
+    e->failed = RAYO_TRUE;
+    return RAYO_FALSE;
+  }
   e->sym = p;
-  e->sym_cap = n;
   return RAYO_TRUE;
 }
 
@@ -504,18 +569,59 @@ static void unknown(encoder *e, const unsigned char *s, size_t n, rayo_i32 *out,
   }
 }
 
+static rayo_bool merge_before(const merge *x, const merge *y) {
+  return x->rank < y->rank || (x->rank == y->rank && x->at < y->at);
+}
+
+static void heap_push(merge *h, size_t *n, merge m) {
+  size_t i = (*n)++;
+  while (i > 0) {
+    const size_t up = (i - 1) / 2;
+    if (!merge_before(&m, &h[up])) break;
+    h[i] = h[up];
+    i = up;
+  }
+  h[i] = m;
+}
+
+static merge heap_pop(merge *h, size_t *n) {
+  const merge top = h[0];
+  const merge last = h[--*n];
+  size_t i = 0;
+  for (;;) {
+    size_t c = 2 * i + 1;
+    if (c >= *n) break;
+    if (c + 1 < *n && merge_before(&h[c + 1], &h[c])) c++;
+    if (!merge_before(&h[c], &last)) break;
+    h[i] = h[c];
+    i = c;
+  }
+  if (*n) h[i] = last;
+  return top;
+}
+
+/* Queues the merge of symbol `at` and the next, if they merge. */
+static void push_pair(encoder *e, rayo_i32 at, size_t *queued) {
+  merge m;
+  rayo_i32 merged;
+  if (at < 0 || e->next[at] < 0) return;
+  m.a = e->sym[at];
+  m.b = e->sym[e->next[at]];
+  m.rank = pair_get(e->t, m.a, m.b, &merged);
+  if (m.rank < 0 || m.rank == RAYO_I32_MAX) return;
+  m.at = at;
+  heap_push(e->heap, queued, m);
+}
+
 static void bpe_word(encoder *e, const char *w, size_t n) {
   const rayo_tokenizer *t = e->t;
-  size_t i = 0, count = 0, len;
-  rayo_i32 whole;
+  size_t i = 0, count = 0, len, queued = 0;
+  rayo_i32 whole, j;
   if (t->ignore_merges && (whole = str_get(t, w, n)) >= 0) {
     emit(e, whole);
     return;
   }
-  if (!grow_syms(e, 4 * n + 1)) {
-    e->failed = RAYO_TRUE;
-    return;
-  }
+  if (!grow_syms(e, n)) return;
   while (i < n) {
     rayo_i32 id;
     len = 1;
@@ -528,25 +634,43 @@ static void bpe_word(encoder *e, const char *w, size_t n) {
     }
     i += len;
   }
-  /* Merge the pair of lowest rank, leftmost first, until none is left. */
-  for (;;) {
-    rayo_i32 rank = RAYO_I32_MAX, merged = -1;
-    size_t at = 0, j;
-    for (j = 0; j + 1 < count; j++) {
-      rayo_i32 m = -1;
-      const rayo_i32 r = pair_get(t, e->sym[j], e->sym[j + 1], &m);
-      if (r >= 0 && r < rank) {
-        rank = r;
-        merged = m;
-        at = j;
-      }
+  if (count == 0) return;
+  /* Merge the pair of lowest rank, leftmost first, until none is left: as
+   * scanning every pair each time would, in O(n log n), since a word of
+   * user text may be long. Each merge queues the two pairs it makes; a
+   * queued merge whose symbols have changed since is skipped. */
+  {
+    rayo_i32 *link = (rayo_i32 *)grow(e->link, &e->link_cap, 2 * count, sizeof *e->link);
+    merge *heap;
+    if (link) e->link = link;
+    heap = link ? (merge *)grow(e->heap, &e->heap_cap, 3 * count, sizeof *e->heap) : NULL;
+    if (!heap) {
+      e->failed = RAYO_TRUE;
+      return;
     }
-    if (merged < 0) break;
-    e->sym[at] = merged;
-    memmove(e->sym + at + 1, e->sym + at + 2, (count - at - 2) * sizeof *e->sym);
-    count--;
+    e->heap = heap;
+    e->prev = e->link;
+    e->next = e->link + count;
   }
-  for (i = 0; i < count; i++) emit(e, e->sym[i]);
+  for (j = 0; j < (rayo_i32)count; j++) {
+    e->prev[j] = j - 1;
+    e->next[j] = j + 1 < (rayo_i32)count ? j + 1 : -1;
+  }
+  for (j = 0; j + 1 < (rayo_i32)count; j++) push_pair(e, j, &queued);
+  while (queued) {
+    const merge m = heap_pop(e->heap, &queued);
+    const rayo_i32 b = e->next[m.at];
+    rayo_i32 merged = -1;
+    if (b < 0 || e->sym[m.at] != m.a || e->sym[b] != m.b) continue;
+    pair_get(t, m.a, m.b, &merged);
+    e->sym[m.at] = merged;
+    e->sym[b] = -1;
+    e->next[m.at] = e->next[b];
+    if (e->next[b] >= 0) e->prev[e->next[b]] = m.at;
+    push_pair(e, e->prev[m.at], &queued);
+    push_pair(e, m.at, &queued);
+  }
+  for (j = 0; j >= 0; j = e->next[j]) emit(e, e->sym[j]);
 }
 
 /* The Unigram model: the segmentation of the highest total score. */
@@ -572,6 +696,7 @@ static void unigram_word(encoder *e, const char *w, size_t n) {
   for (i = 0; i <= n; i++) {
     e->best[i] = -3.0e38f;
     e->from[i] = -1;
+    e->best_id[i] = -1;
   }
   e->best[0] = 0.0f;
   for (i = 0; i < n; i++) {
@@ -600,10 +725,7 @@ static void unigram_word(encoder *e, const char *w, size_t n) {
       e->best_id[i + len] = -1; /* unknown */
     }
   }
-  if (!grow_syms(e, 4 * n + 1)) {
-    e->failed = RAYO_TRUE;
-    return;
-  }
+  if (!grow_syms(e, n)) return;
   /* Back from the end, then reversed. */
   for (at = (long)n; at > 0; at = e->from[at]) {
     if (e->best_id[at] >= 0) {
@@ -641,6 +763,7 @@ static rayo_bool split_regex(encoder *e, const rayo_regex *rx, rayo_bool removed
   for (s = 0; s < in->count; s++) {
     const span sp = in->items[s];
     size_t n = 0, i = sp.start, len, pos = 0, gap = 0;
+    long budget;
     if (sp.end - sp.start + 1 > e->cp_cap) {
       const size_t cap = sp.end - sp.start + 1;
       rayo_u32 *c = realloc(e->cps, cap * sizeof *c);
@@ -656,8 +779,15 @@ static rayo_bool split_regex(encoder *e, const rayo_regex *rx, rayo_bool removed
       i += len;
     }
     e->cp_at[n] = sp.end;
+    /* The work matching may do on this span: RAYO_PATTERN_STEPS a code
+     * point (n is at most RAYO_MAX_TEXT_BYTES, so this fits). */
+    budget = (long)RAYO_PATTERN_STEPS * ((long)n + 16);
     while (pos < n) {
-      const long end = rayo_regex_match(rx, e->cps, n, pos);
+      const long end = rayo_regex_match(rx, e->cps, n, pos, &budget);
+      if (end == RAYO_REGEX_TOO_COSTLY) {
+        e->over = RAYO_TRUE;
+        return RAYO_FALSE;
+      }
       if (end > (long)pos) {
         spans_add(out, e->cp_at[gap], e->cp_at[pos]);
         if (!removed) spans_add(out, e->cp_at[pos], e->cp_at[end]);
@@ -698,7 +828,7 @@ static void rewrite(buffer *b, const pre_step *st, rayo_bool first_word, const s
     const size_t start = b->len;
     if (st->kind == TT_BYTELEVEL) {
       if (st->prefix && s == 0 && b->data[sp.start] != ' ') buf_add(b, " ", 1);
-      for (i = sp.start; i < sp.end && !b->failed; i++) buf_add(b, b->data + i, 1);
+      for (i = sp.start; i < sp.end && !b->failed; i++) buf_repeat(b, i);
       spans_add(out, start, b->len);
     } else { /* METASPACE: spaces to the replacement, prepended, split before each */
       size_t word_start = start;
@@ -716,7 +846,7 @@ static void rewrite(buffer *b, const pre_step *st, rayo_bool first_word, const s
           }
           buf_add(b, st->replacement, st->replacement_len);
         } else {
-          buf_add(b, b->data + i, 1);
+          buf_repeat(b, i);
         }
       }
       spans_add(out, word_start, b->len);
@@ -751,6 +881,7 @@ static void normalise(const rayo_tokenizer *t, const char *text, size_t n, buffe
     b->len = 0;
     buf_add(b, tmp.data, tmp.len);
     if (tmp.failed) b->failed = RAYO_TRUE;
+    if (tmp.too_long) b->too_long = RAYO_TRUE;
   }
   free(tmp.data);
 }
@@ -799,6 +930,7 @@ static rayo_bool segment(encoder *e, const char *text, size_t n, rayo_bool first
     }
     ok = ok && !a.failed;
   }
+  if (b.too_long) e->over = RAYO_TRUE;
   ok = ok && !b.failed;
   for (i = 0; ok && i < a.count; i++)
     word(e, b.data + a.items[i].start, a.items[i].end - a.items[i].start);
@@ -817,6 +949,11 @@ rayo_status rayo_tokenizer_encode(const rayo_tokenizer *tokenizer, const char *t
   if (!tokenizer || (!text && size) || (!ids && capacity) || !count) {
     return rayo_fail(msg, RAYO_ERR_INVALID_ARGUMENT, "null argument");
   }
+  *count = 0;
+  if (size > (size_t)RAYO_MAX_TEXT_BYTES) {
+    return rayo_fail(msg, RAYO_ERR_LIMIT, "%lu bytes of text, at most %ld (RAYO_MAX_TEXT_BYTES)",
+                     (unsigned long)size, (long)RAYO_MAX_TEXT_BYTES);
+  }
   memset(&e, 0, sizeof e);
   e.t = tokenizer;
   e.ids = ids;
@@ -826,6 +963,10 @@ rayo_status rayo_tokenizer_encode(const rayo_tokenizer *tokenizer, const char *t
   while (i < size && ok) {
     rayo_i32 hit = -1;
     size_t hit_len = 0;
+    if (!tokenizer->added_first[(unsigned char)text[i]]) {
+      i++;
+      continue;
+    }
     for (k = 0; k < tokenizer->added_count; k++) {
       size_t len;
       rayo_i32 id;
@@ -847,12 +988,19 @@ rayo_status rayo_tokenizer_encode(const rayo_tokenizer *tokenizer, const char *t
   }
   if (ok && size > start) ok = segment(&e, text + start, size - start, start == 0);
   free(e.sym);
+  free(e.link);
+  free(e.heap);
   free(e.cps);
   free(e.cp_at);
   free(e.best);
   free(e.from);
   free(e.best_id);
   *count = e.count;
+  if (!ok && e.over) {
+    return rayo_fail(msg, RAYO_ERR_LIMIT,
+                     "the text is too long once normalised (RAYO_MAX_TEXT_BYTES), or the "
+                     "tokeniser's pattern backtracks too much on it (RAYO_PATTERN_STEPS)");
+  }
   if (!ok) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   if (e.count > capacity) {
     return rayo_fail(msg, RAYO_ERR_SHAPE, "%lu tokens, room for %lu", (unsigned long)e.count,
@@ -860,3 +1008,5 @@ rayo_status rayo_tokenizer_encode(const rayo_tokenizer *tokenizer, const char *t
   }
   return RAYO_OK;
 }
+
+#include "core/small_end.h"

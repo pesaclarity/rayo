@@ -96,13 +96,13 @@ static rayo_status infer(const void *params, const rayo_tensor *in, const rayo_i
   out->shape.dims[1] = (rayo_i32)p->lin.out;
   *scratch = 0;
   if (p->lin.dtype == RAYO_DTYPE_I8) {
-    rayo_scratch_add(scratch, t * c);                    /* q */
-    rayo_scratch_add(scratch, t * kp);                   /* cols */
-    rayo_scratch_add(scratch, t * sizeof(float));        /* scale */
-    rayo_scratch_add(scratch, t * sizeof(rayo_i32));     /* zero */
-    rayo_scratch_add(scratch, t * n * sizeof(rayo_i32)); /* acc */
+    rayo_scratch_add(scratch, t * c);                        /* q */
+    rayo_scratch_add(scratch, rayo_scratch_bytes(t, kp, 1)); /* cols */
+    rayo_scratch_add(scratch, t * sizeof(float));            /* scale */
+    rayo_scratch_add(scratch, t * sizeof(rayo_i32));         /* zero */
+    rayo_scratch_add(scratch, t * n * sizeof(rayo_i32));     /* acc */
   } else {
-    rayo_scratch_add(scratch, t * kp * sizeof(float)); /* cols */
+    rayo_scratch_add(scratch, rayo_scratch_bytes(t, kp, sizeof(float))); /* cols */
   }
   return RAYO_OK;
 }

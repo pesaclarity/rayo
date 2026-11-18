@@ -91,6 +91,46 @@ jobs:
         run: tool/ci/sanitize.sh clang -mavx2 -mfma
       - name: ASan, LSan and UBSan, gcc, generic
         run: tool/ci/sanitize.sh gcc
+      - name: The fuzz corpora and tests/malformed through every fuzz target, ASan and UBSan
+        run: tool/ci/fuzz.sh replay clang -fsanitize=address,undefined -fno-sanitize-recover=all
+
+  # libFuzzer on the loader, the graph, the tokeniser's table, tokenizer.json and text
+  # (tests/fuzz/README.md), a minute each: a smoke test, not a campaign.
+  fuzz:
+    name: fuzz
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: libFuzzer, ASan and UBSan, 60 s a target
+        run: FUZZ_OUT="$RUNNER_TEMP/fuzz" tool/ci/fuzz.sh run 60
+      - name: The failing inputs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-failures
+          path: |
+            crash-*
+            timeout-*
+            oom-*
+            leak-*
+            ${{ runner.temp }}/fuzz/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The clang static analyzer and cppcheck on the library: no finding.
+  analyze:
+    name: analyze
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: cppcheck
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends cppcheck
+      - name: clang --analyze and cppcheck
+        run: tool/ci/analyze.sh
 
   linux-arm64:
     name: linux-arm64
@@ -178,7 +218,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: NDK builds, size budget
+      - name: NDK builds, hardened (readelf), size budget
         env:
           # 150 before the language-model path (tokeniser, sampler, generator, Unicode
           # tables, Q4 kernels: about 60 KB); tool/ci/android.sh says what.

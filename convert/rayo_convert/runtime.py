@@ -35,7 +35,7 @@ class _Message(C.Structure):
 
 class _ModelOptions(C.Structure):
     _fields_ = [("ops", C.c_void_p), ("op_count", C.c_int), ("read_file", C.c_int),
-                ("access", C.c_int)]
+                ("access", C.c_int), ("integrity", C.c_void_p)]
 
 
 class _SessionOptions(C.Structure):
@@ -125,7 +125,7 @@ class Model:
         self.ptr = C.c_void_p()
         msg = _Message()
         if path is not None:
-            opts = _ModelOptions(None, 0, int(read_file), 0)
+            opts = _ModelOptions(None, 0, int(read_file), 0, None)
             s = lib.lib.rayo_model_load(str(path).encode(), C.byref(opts), C.byref(self.ptr),
                                         C.byref(msg))
         else:

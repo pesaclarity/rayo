@@ -4,8 +4,11 @@
 #include <string.h>
 
 #include "core/message.h"
+#include "core/names.h"
 #include "ops/ops.h"
 #include "rayo/config.h"
+
+#include "core/small_begin.h"
 
 rayo_i32 rayo_graph_symbol(const rayo_graph *graph, const char *name) {
   rayo_i32 i;
@@ -40,6 +43,10 @@ static rayo_status read_symbols(const rayo_json *json, rayo_graph *g, rayo_arena
   size_t i;
   if (s && s->kind != RAYO_JSON_OBJECT) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "graph symbols: an object of sizes");
+  }
+  if (n > (size_t)RAYO_MAX_SYMBOLS) {
+    return rayo_fail(msg, RAYO_ERR_LIMIT, "%lu size symbols, at most %d (RAYO_MAX_SYMBOLS)",
+                     (unsigned long)n, RAYO_MAX_SYMBOLS);
   }
   g->symbols = rayo_arena_array(arena, n ? n : 1, sizeof *g->symbols);
   g->symbol_max = rayo_arena_array(arena, n ? n : 1, sizeof *g->symbol_max);
@@ -119,33 +126,36 @@ static rayo_ref ref_of(rayo_ref_kind kind, rayo_i32 index) {
   return r;
 }
 
-/* A name in scope before node `upto`: an earlier node, an input, a state,
- * else a weight. Later definitions shadow earlier ones. */
-static rayo_bool resolve(const rayo_graph *g, rayo_i32 upto, const rayo_pcwt *w, const char *name,
+/* The names in scope while the graph is read: graph inputs, states and
+ * the nodes read so far, each as kind + 4 * index, so a node's inputs
+ * resolve in constant time however large the graph. */
+static rayo_i32 scope_value(rayo_ref_kind kind, rayo_i32 index) {
+  return (rayo_i32)kind + 4 * index;
+}
+
+/* Adds `name` as `kind` `index`: a later node shadows an earlier one, and
+ * nodes shadow inputs, which shadow states; otherwise the first stays. */
+static void scope_add(rayo_names *scope, const char *name, rayo_ref_kind kind, rayo_i32 index) {
+  rayo_i32 *slot = rayo_names_slot(scope, name);
+  if (*slot < 0 || kind == RAYO_REF_NODE ||
+      (kind == RAYO_REF_INPUT && *slot % 4 == RAYO_REF_STATE)) {
+    *slot = scope_value(kind, index);
+  }
+}
+
+/* A name in scope: an earlier node, an input, a state, else a weight (of
+ * `w`, if given). */
+static rayo_bool resolve(const rayo_names *scope, const rayo_pcwt *w, const char *name,
                          rayo_ref *ref) {
-  rayo_i32 i;
-  size_t k;
-  for (i = upto - 1; i >= 0; i--) {
-    if (strcmp(g->nodes[i].output, name) == 0) {
-      *ref = ref_of(RAYO_REF_NODE, i);
-      return RAYO_TRUE;
-    }
+  const rayo_i32 v = rayo_names_get(scope, name);
+  if (v >= 0) {
+    *ref = ref_of((rayo_ref_kind)(v % 4), v / 4);
+    return RAYO_TRUE;
   }
-  for (i = 0; i < g->input_count; i++) {
-    if (strcmp(g->inputs[i].name, name) == 0) {
-      *ref = ref_of(RAYO_REF_INPUT, i);
-      return RAYO_TRUE;
-    }
-  }
-  for (i = 0; i < g->state_count; i++) {
-    if (strcmp(g->states[i].name, name) == 0) {
-      *ref = ref_of(RAYO_REF_STATE, i);
-      return RAYO_TRUE;
-    }
-  }
-  for (k = 0; w && k < w->weight_count; k++) {
-    if (strcmp(w->weights[k].name, name) == 0) {
-      *ref = ref_of(RAYO_REF_WEIGHT, (rayo_i32)k);
+  if (w) {
+    const rayo_weight *weight = rayo_pcwt_find(w, name);
+    if (weight) {
+      *ref = ref_of(RAYO_REF_WEIGHT, (rayo_i32)(weight - w->weights));
       return RAYO_TRUE;
     }
   }
@@ -182,8 +192,8 @@ static const rayo_custom_op *custom_op(const rayo_model_options *o, const char *
 }
 
 static rayo_status read_node(const rayo_json *j, rayo_graph *g, rayo_i32 index, const rayo_pcwt *w,
-                             const rayo_model_options *options, rayo_arena *arena,
-                             rayo_message *msg) {
+                             const rayo_names *scope, const rayo_model_options *options,
+                             rayo_arena *arena, rayo_message *msg) {
   rayo_node *n = &g->nodes[index];
   const char *op = rayo_json_as_string(rayo_json_get(j, "op"));
   const rayo_json *inputs = rayo_json_get(j, "inputs");
@@ -218,7 +228,7 @@ static rayo_status read_node(const rayo_json *j, rayo_graph *g, rayo_i32 index, 
   }
   for (i = 0; i < n->input_count; i++) {
     const char *name = rayo_json_as_string(inputs->items[i]);
-    if (!name || !resolve(g, index, w, name, &n->inputs[i])) {
+    if (!name || !resolve(scope, w, name, &n->inputs[i])) {
       free(seen);
       return rayo_fail(msg, RAYO_ERR_FORMAT, "node %s: no input, node or weight %s", n->output,
                        name ? name : "(not a string)");
@@ -236,11 +246,15 @@ static rayo_status read_node(const rayo_json *j, rayo_graph *g, rayo_i32 index, 
   return s;
 }
 
-static rayo_status read_outputs(const rayo_json *list, rayo_graph *g, rayo_arena *arena,
-                                rayo_message *msg) {
+static rayo_status read_outputs(const rayo_json *list, rayo_graph *g, const rayo_names *scope,
+                                rayo_arena *arena, rayo_message *msg) {
   size_t i;
   if (!list || list->kind != RAYO_JSON_ARRAY || list->length == 0) {
     return rayo_fail(msg, RAYO_ERR_FORMAT, "the graph needs outputs");
+  }
+  if (list->length > (size_t)RAYO_MAX_NODES) {
+    return rayo_fail(msg, RAYO_ERR_LIMIT, "%lu graph outputs, at most %ld (RAYO_MAX_NODES)",
+                     (unsigned long)list->length, (long)RAYO_MAX_NODES);
   }
   g->outputs = rayo_arena_array(arena, list->length, sizeof *g->outputs);
   if (!g->outputs) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
@@ -249,8 +263,7 @@ static rayo_status read_outputs(const rayo_json *list, rayo_graph *g, rayo_arena
     const char *name = rayo_json_as_string(rayo_json_get(list->items[i], "name"));
     const char *node = rayo_json_as_string(rayo_json_get(list->items[i], "node"));
     rayo_ref ref;
-    if (!name || !node || !resolve(g, g->node_count, NULL, node, &ref) ||
-        ref.kind != RAYO_REF_NODE) {
+    if (!name || !node || !resolve(scope, NULL, node, &ref) || ref.kind != RAYO_REF_NODE) {
       return rayo_fail(msg, RAYO_ERR_FORMAT, "graph output %lu: needs a name and a node",
                        (unsigned long)i);
     }
@@ -264,6 +277,11 @@ static rayo_status read_decls(const rayo_json *list, rayo_graph *g, rayo_arena *
                               rayo_bool state, rayo_graph_input **out, rayo_i32 *count,
                               rayo_message *msg) {
   size_t i;
+  if (list->length > (size_t)RAYO_MAX_NODES) {
+    return rayo_fail(msg, RAYO_ERR_LIMIT, "%lu graph %s, at most %ld (RAYO_MAX_NODES)",
+                     (unsigned long)list->length, state ? "states" : "inputs",
+                     (long)RAYO_MAX_NODES);
+  }
   *out = rayo_arena_array(arena, list->length ? list->length : 1, sizeof **out);
   if (!*out) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
   *count = (rayo_i32)list->length;
@@ -277,8 +295,9 @@ static rayo_status read_decls(const rayo_json *list, rayo_graph *g, rayo_arena *
 rayo_status rayo_graph_read(const rayo_json *json, const rayo_pcwt *weights,
                             const rayo_model_options *options, rayo_arena *arena, rayo_graph *out,
                             rayo_message *msg) {
-  rayo_i32 version;
+  rayo_i32 version, k;
   const rayo_json *inputs, *states, *nodes;
+  rayo_names scope;
   rayo_status s;
   size_t i;
   memset(out, 0, sizeof *out);
@@ -310,13 +329,30 @@ rayo_status rayo_graph_read(const rayo_json *json, const rayo_pcwt *weights,
     s = read_decls(states, out, arena, RAYO_TRUE, &out->states, &out->state_count, msg);
   }
   if (s != RAYO_OK) return s;
+  if (nodes->length > (size_t)RAYO_MAX_NODES) {
+    return rayo_fail(msg, RAYO_ERR_LIMIT, "%lu graph nodes, at most %ld (RAYO_MAX_NODES)",
+                     (unsigned long)nodes->length, (long)RAYO_MAX_NODES);
+  }
   out->nodes = rayo_arena_array(arena, nodes->length, sizeof *out->nodes);
-  if (!out->nodes) return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
+  if (!out->nodes ||
+      !rayo_names_init(&scope, (size_t)out->input_count + (size_t)out->state_count + nodes->length,
+                       arena)) {
+    return rayo_fail(msg, RAYO_ERR_OUT_OF_MEMORY, "out of memory");
+  }
+  for (k = 0; k < out->state_count; k++) {
+    scope_add(&scope, out->states[k].name, RAYO_REF_STATE, k);
+  }
+  for (k = 0; k < out->input_count; k++) {
+    scope_add(&scope, out->inputs[k].name, RAYO_REF_INPUT, k);
+  }
   for (i = 0; i < nodes->length; i++) {
     out->node_count = (rayo_i32)i;
-    s = read_node(nodes->items[i], out, (rayo_i32)i, weights, options, arena, msg);
+    s = read_node(nodes->items[i], out, (rayo_i32)i, weights, &scope, options, arena, msg);
     if (s != RAYO_OK) return s;
+    scope_add(&scope, out->nodes[i].output, RAYO_REF_NODE, (rayo_i32)i);
   }
   out->node_count = (rayo_i32)nodes->length;
-  return read_outputs(rayo_json_get(json, "outputs"), out, arena, msg);
+  return read_outputs(rayo_json_get(json, "outputs"), out, &scope, arena, msg);
 }
+
+#include "core/small_end.h"

@@ -12,6 +12,7 @@
 #include "rayo/tensor.h"
 #include "rayo/text.h"
 #include "rayo/types.h"
+#include "rayo/verify.h"
 #include "rayo/version.h"
 
 #endif
