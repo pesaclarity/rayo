@@ -1,6 +1,7 @@
 #include "core/json.h"
 
 #include <float.h>
+#include <locale.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,11 +9,14 @@
 #include "core/message.h"
 #include "rayo/config.h"
 
+#include "core/small_begin.h"
+
 typedef struct parser {
   const char *at;
   const char *end;
   rayo_arena *arena;
   rayo_message *msg;
+  size_t values_left; /* the most values still allowed */
 } parser;
 
 static rayo_status fail(parser *p, const char *what) {
@@ -30,6 +34,37 @@ static void skip_ws(parser *p) {
 }
 
 static rayo_status parse_value(parser *p, int depth, rayo_json **out);
+
+/* The length of the UTF-8 sequence at s (before end), or 0 when it is not
+ * one: overlong forms, surrogates and values past U+10FFFF are not. */
+static size_t utf8_length(const unsigned char *s, const unsigned char *end) {
+  const unsigned b = s[0];
+  size_t need, i;
+  unsigned long c;
+  if (b < 0x80) return 1;
+  if (b >= 0xC2 && b <= 0xDF) {
+    need = 2;
+    c = b & 0x1Fu;
+  } else if (b >= 0xE0 && b <= 0xEF) {
+    need = 3;
+    c = b & 0x0Fu;
+  } else if (b >= 0xF0 && b <= 0xF4) {
+    need = 4;
+    c = b & 0x07u;
+  } else {
+    return 0;
+  }
+  if ((size_t)(end - s) < need) return 0;
+  for (i = 1; i < need; i++) {
+    if ((s[i] & 0xC0u) != 0x80u) return 0;
+    c = c << 6 | (s[i] & 0x3Fu);
+  }
+  if ((need == 3 && (c < 0x800 || (c >= 0xD800 && c <= 0xDFFF))) ||
+      (need == 4 && (c < 0x10000 || c > 0x10FFFF))) {
+    return 0;
+  }
+  return need;
+}
 
 static int hex(char c) {
   if (c >= '0' && c <= '9') return c - '0';
@@ -128,6 +163,16 @@ static rayo_status parse_string(parser *p, const char **out, size_t *len) {
     char e;
     int simple;
     if (c < 0x20) return fail(p, "control character in a string");
+    if (c >= 0x80) {
+      /* Text is UTF-8 (RFC 8259): names and metadata reach callers that
+       * decode it, such as the Dart package. */
+      const size_t seq = utf8_length((const unsigned char *)p->at - 1, (const unsigned char *)q);
+      if (seq == 0) return fail(p, "a string that is not UTF-8");
+      memcpy(s + n, p->at - 1, seq);
+      n += seq;
+      p->at += seq - 1;
+      continue;
+    }
     if (c != '\\') {
       s[n++] = (char)c;
       continue;
@@ -185,6 +230,13 @@ static rayo_status parse_number(parser *p, double *out) {
   if (n >= sizeof buf) return fail(p, "number too long");
   memcpy(buf, p->at, n);
   buf[n] = '\0';
+  {
+    /* strtod reads the C library's locale: JSON's '.' as its decimal
+     * point, so a program that sets a locale reads the same numbers. */
+    const char point = localeconv()->decimal_point[0];
+    char *dot = strchr(buf, '.');
+    if (dot && point && point != '.') *dot = point;
+  }
   *out = strtod(buf, NULL);
   if (!(*out <= DBL_MAX && *out >= -DBL_MAX)) return fail(p, "number out of range");
   p->at = s;
@@ -284,6 +336,10 @@ static rayo_status parse_value(parser *p, int depth, rayo_json **out) {
   rayo_status s = RAYO_OK;
   char c;
   if (depth > RAYO_JSON_MAX_DEPTH) return fail(p, "nested too deep");
+  if (p->values_left == 0) {
+    return rayo_fail(p->msg, RAYO_ERR_LIMIT, "JSON with too many values for rayo/config.h's limit");
+  }
+  p->values_left--;
   skip_ws(p);
   if (p->at >= p->end) return fail(p, "unexpected end");
   v = (rayo_json *)rayo_arena_alloc(p->arena, sizeof *v);
@@ -317,14 +373,15 @@ static rayo_status parse_value(parser *p, int depth, rayo_json **out) {
   return RAYO_OK;
 }
 
-rayo_status rayo_json_parse(const char *text, size_t size, rayo_arena *arena, rayo_json **out,
-                            rayo_message *msg) {
+rayo_status rayo_json_parse(const char *text, size_t size, size_t max_values, rayo_arena *arena,
+                            rayo_json **out, rayo_message *msg) {
   parser p;
   rayo_status s;
   p.at = text;
   p.end = text + size;
   p.arena = arena;
   p.msg = msg;
+  p.values_left = max_values;
   s = parse_value(&p, 0, out);
   if (s != RAYO_OK) return s;
   skip_ws(&p);
@@ -353,3 +410,5 @@ rayo_bool rayo_json_as_int(const rayo_json *v, rayo_i32 *out) {
 const char *rayo_json_as_string(const rayo_json *v) {
   return v && v->kind == RAYO_JSON_STRING ? v->string : NULL;
 }
+
+#include "core/small_end.h"

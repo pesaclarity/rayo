@@ -99,7 +99,8 @@ int main(int argc, char **argv) {
   bench_choose_kernels(session, argc > 4 ? argv[4] : NULL);
   arena.head = NULL;
   arena.bytes = 0;
-  if (rayo_json_parse((const char *)fixture, fixture_size, &arena, &root, &msg) != RAYO_OK) {
+  if (rayo_json_parse((const char *)fixture, fixture_size, (size_t)-1, &arena, &root, &msg) !=
+      RAYO_OK) {
     fprintf(stderr, "fixture: %s\n", msg.text);
     return 2;
   }

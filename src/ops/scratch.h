@@ -8,7 +8,12 @@
 
 #include "core/alloc.h"
 
+/* Adds `bytes` (aligned) to `*total`, saturating at the largest size_t. */
 void rayo_scratch_add(size_t *total, size_t bytes);
+
+/* a * b * c, or the largest size_t when that overflows: for sizes that
+ * are products of dimensions larger than any one tensor. */
+size_t rayo_scratch_bytes(size_t a, size_t b, size_t c);
 
 void *rayo_scratch_take(unsigned char **at, size_t bytes);
 

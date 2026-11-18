@@ -5,6 +5,9 @@
 #include "core/alloc.h"
 #include "core/compat.h"
 #include "core/message.h"
+#include "rayo/config.h"
+
+#include "core/small_begin.h"
 
 void rayo_graph_node_inputs(const rayo_graph *graph, const rayo_pcwt *weights, rayo_i32 index,
                             const rayo_values *values, rayo_tensor *out) {
@@ -166,13 +169,38 @@ static void last_uses(const rayo_graph *graph, rayo_i32 *last) {
   for (o = 0; o < graph->output_count; o++) last[graph->outputs[o].node] = graph->node_count;
 }
 
-static size_t sum_fixed(const rayo_tensor *tensors, rayo_i32 count, size_t *offsets, size_t base) {
+/* a + b, or RAYO_FALSE when that is more than RAYO_MAX_ARENA_BYTES: every
+ * offset of the plan stays below it, on 32-bit systems too. */
+static rayo_bool add_bytes(size_t a, size_t b, size_t *out) {
+  if (a > (size_t)RAYO_MAX_ARENA_BYTES || b > (size_t)RAYO_MAX_ARENA_BYTES - a) return RAYO_FALSE;
+  *out = a + b;
+  return RAYO_TRUE;
+}
+
+/* `size` rounded up to RAYO_ALIGN, within RAYO_MAX_ARENA_BYTES. */
+static rayo_bool aligned_bytes(size_t size, size_t *out) {
+  if (!add_bytes(size, RAYO_ALIGN - 1, out)) return RAYO_FALSE;
+  *out &= ~(size_t)(RAYO_ALIGN - 1);
+  return RAYO_TRUE;
+}
+
+static rayo_bool sum_fixed(const rayo_tensor *tensors, rayo_i32 count, size_t *offsets,
+                           size_t *base) {
   rayo_i32 i;
   for (i = 0; i < count; i++) {
-    offsets[i] = base;
-    base += rayo_align_up(rayo_tensor_storage(&tensors[i]));
+    size_t size;
+    offsets[i] = *base;
+    if (!aligned_bytes(rayo_tensor_storage(&tensors[i]), &size) || !add_bytes(*base, size, base)) {
+      return RAYO_FALSE;
+    }
   }
-  return base;
+  return RAYO_TRUE;
+}
+
+static rayo_status too_large(rayo_message *msg) {
+  return rayo_fail(msg, RAYO_ERR_LIMIT,
+                   "the session would need more than %ld bytes (RAYO_MAX_ARENA_BYTES)",
+                   (long)RAYO_MAX_ARENA_BYTES);
 }
 
 rayo_status rayo_plan_make(const rayo_graph *graph, const rayo_values *values, size_t scratch,
@@ -192,23 +220,34 @@ rayo_status rayo_plan_make(const rayo_graph *graph, const rayo_values *values, s
   }
   last_uses(graph, last);
   /* States and inputs live for the whole run, below everything else. */
-  base = sum_fixed(values->states, graph->state_count, out->state_offset, 0);
-  base = sum_fixed(values->inputs, graph->input_count, out->input_offset, base);
+  base = 0;
+  if (!sum_fixed(values->states, graph->state_count, out->state_offset, &base) ||
+      !sum_fixed(values->inputs, graph->input_count, out->input_offset, &base)) {
+    return too_large(msg);
+  }
   for (i = 0; i < n; i++) {
     if (!graph->nodes[i].op->aliases_input) {
-      size_t size = rayo_align_up(rayo_tensor_bytes(&values->nodes[i]));
-      size_t at = place(live, count, size);
+      size_t size, at, end;
+      if (!aligned_bytes(rayo_tensor_bytes(&values->nodes[i]), &size)) return too_large(msg);
+      /* Every live block ends within `top`, so `at` is at most `top`. */
+      at = place(live, count, size);
+      if (!add_bytes(at, size, &end) || !add_bytes(base, end, &out->node_offset[i])) {
+        return too_large(msg);
+      }
       out->node_offset[i] = base + at;
       insert(live, &count, at, size, i);
-      if (at + size > top) top = at + size;
+      if (end > top) top = end;
     }
     /* Nodes not read after this one are free from now on. */
     for (j = 0; j <= i; j++) {
       if (last[j] == i) release(live, &count, j);
     }
   }
-  out->scratch_offset = base + top;
-  out->scratch_bytes = rayo_align_up(scratch);
-  out->arena_bytes = out->scratch_offset + out->scratch_bytes;
+  if (!add_bytes(base, top, &out->scratch_offset) || !aligned_bytes(scratch, &out->scratch_bytes) ||
+      !add_bytes(out->scratch_offset, out->scratch_bytes, &out->arena_bytes)) {
+    return too_large(msg);
+  }
   return RAYO_OK;
 }
+
+#include "core/small_end.h"

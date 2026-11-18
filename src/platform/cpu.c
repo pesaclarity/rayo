@@ -27,6 +27,8 @@
 #include <windows.h>
 #endif
 
+#include "core/small_begin.h"
+
 #if defined(RAYO_CPU_POSIX)
 /* A whole number from the file `path`, or -1. */
 static long read_number(const char *path) {
@@ -90,3 +92,5 @@ RAYO_API int rayo_cpu_default_threads(void) {
   return fast < 4 ? fast : 4;
 #endif
 }
+
+#include "core/small_end.h"

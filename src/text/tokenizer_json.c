@@ -8,8 +8,11 @@
 #include "core/arena.h"
 #include "core/json.h"
 #include "core/message.h"
+#include "rayo/config.h"
 #include "text/table.h"
 #include "text/unicode.h"
+
+#include "core/small_begin.h"
 
 /* A hash table of byte strings to ids, open addressing. */
 typedef struct str_entry {
@@ -390,7 +393,7 @@ static rayo_status read_merges(builder *t, const rayo_json *merges) {
       free(buf);
       return rayo_fail(t->msg, RAYO_ERR_FORMAT, "tokenizer: merge %lu", (unsigned long)i);
     }
-    if (na + nb + 1 > cap) {
+    if (!buf || na + nb + 1 > cap) {
       char *p;
       cap = 2 * (na + nb + 1);
       p = realloc(buf, cap);
@@ -459,6 +462,10 @@ static rayo_status read_model(builder *t, const rayo_json *model) {
           e->items[1]->kind != RAYO_JSON_NUMBER) {
         return rayo_fail(t->msg, RAYO_ERR_FORMAT, "tokenizer: Unigram entry %lu", (unsigned long)i);
       }
+      /* A log probability: finite, as the table's reader requires. */
+      if (!(e->items[1]->number >= -1.0e6 && e->items[1]->number <= 1.0e6)) {
+        return rayo_fail(t->msg, RAYO_ERR_FORMAT, "tokenizer: Unigram score %lu", (unsigned long)i);
+      }
       s = add_token(t, e->items[0]->string, e->items[0]->length, (rayo_i32)i);
       if (s != RAYO_OK) return s;
       t->scores[i] = (float)e->items[1]->number;
@@ -487,6 +494,15 @@ static rayo_i32 largest_id(const rayo_json *model, const rayo_json *added) {
     if (rayo_json_as_int(rayo_json_get(added->items[i], "id"), &id) && id > top) top = id;
   }
   return top;
+}
+
+/* The entries of the vocabulary and the added tokens. */
+static size_t entries(const rayo_json *model, const rayo_json *added) {
+  const rayo_json *vocab = rayo_json_get(model, "vocab");
+  size_t n = vocab && (vocab->kind == RAYO_JSON_OBJECT || vocab->kind == RAYO_JSON_ARRAY)
+                 ? vocab->length
+                 : 0;
+  return n + (added && added->kind == RAYO_JSON_ARRAY ? added->length : 0);
 }
 
 static rayo_status read_added(builder *t, const rayo_json *added) {
@@ -719,7 +735,12 @@ rayo_status rayo_toktab_from_json(const char *json, size_t size, unsigned char *
   memset(&parse, 0, sizeof parse);
   memset(&t, 0, sizeof t);
   t.msg = msg;
-  s = rayo_json_parse(json, size, &parse, &root, msg);
+  if (size > (size_t)RAYO_MAX_TOKENIZER_JSON_BYTES) {
+    return rayo_fail(msg, RAYO_ERR_LIMIT,
+                     "tokenizer: %lu bytes, at most %ld (RAYO_MAX_TOKENIZER_JSON_BYTES)",
+                     (unsigned long)size, (long)RAYO_MAX_TOKENIZER_JSON_BYTES);
+  }
+  s = rayo_json_parse(json, size, (size_t)RAYO_MAX_TOKENIZER_JSON_VALUES, &parse, &root, msg);
   if (s != RAYO_OK) {
     rayo_arena_free(&parse);
     return s;
@@ -730,6 +751,18 @@ rayo_status rayo_toktab_from_json(const char *json, size_t size, unsigned char *
   if (top < 0 || top >= RAYO_I32_MAX - 1) {
     rayo_arena_free(&parse);
     return rayo_fail(msg, RAYO_ERR_FORMAT, "tokenizer: no vocabulary");
+  }
+  /* The tables are as long as the largest id: it must be one of a
+   * vocabulary as large as the file's entries (with room for gaps), not an
+   * id that would make rayo allocate gigabytes for a small file. */
+  {
+    const size_t n = entries(model, added);
+    if ((size_t)top >= (size_t)RAYO_MAX_VOCAB || (size_t)top > 2 * n + 1024) {
+      rayo_arena_free(&parse);
+      return rayo_fail(msg, RAYO_ERR_LIMIT,
+                       "tokenizer: id %ld, for %lu entries (at most %ld, RAYO_MAX_VOCAB)",
+                       (long)top, (unsigned long)n, (long)RAYO_MAX_VOCAB);
+    }
   }
   t.vocab_size = top + 1;
   t.unk = -1;
@@ -763,3 +796,5 @@ rayo_status rayo_toktab_from_json(const char *json, size_t size, unsigned char *
   rayo_arena_free(&parse);
   return s;
 }
+
+#include "core/small_end.h"
