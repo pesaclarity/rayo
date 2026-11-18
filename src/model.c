@@ -63,18 +63,20 @@ rayo_status rayo_model_create_with(const void *data, size_t size, const rayo_mod
   return RAYO_OK;
 }
 
-/* The platform's hint for a rayo_access. The default: see
- * docs/RUNNING-SLMS.md for what was measured. */
+/* The platform's hint for a rayo_access. The default is WILLNEED: with the
+ * page cache squeezed below the file (a decoder reads every weight each
+ * token), it decoded as fast as no hint and faster than SEQUENTIAL, which
+ * drops pages behind the reader (docs/RUNNING-SLMS.md). */
 static rayo_advice advice_of(int access) {
   switch (access) {
     case RAYO_ACCESS_NORMAL:
       return RAYO_ADVICE_NORMAL;
-    case RAYO_ACCESS_WILLNEED:
-      return RAYO_ADVICE_WILLNEED;
+    case RAYO_ACCESS_SEQUENTIAL:
+      return RAYO_ADVICE_SEQUENTIAL;
     case RAYO_ACCESS_RANDOM:
       return RAYO_ADVICE_RANDOM;
     default:
-      return RAYO_ADVICE_SEQUENTIAL;
+      return RAYO_ADVICE_WILLNEED;
   }
 }
 

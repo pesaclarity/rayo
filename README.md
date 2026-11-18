@@ -27,9 +27,10 @@ offline, in the Play and the F-Droid builds alike; nothing in the library is spe
 - **Decoders**: states kept across runs (a key/value cache) and size symbols bound per run, so
   a transformer decodes word by word without recomputing the past.
 - **Small language models**: Hugging Face decoders (SmolLM2, Qwen2.5, Llama-style ones)
-  converted from safetensors, with 4-bit group-wise weights mapped from the file, grouped-query
-  attention, rotary embeddings, a tokeniser of tokenizer.json, a sampler and a generator, in
-  C89; a chat example for phones and computers: [docs/RUNNING-SLMS.md](docs/RUNNING-SLMS.md).
+  converted from safetensors, with 4-bit (and 3-bit) group-wise weights mapped from the file,
+  an int8 key/value cache, grouped-query attention, rotary embeddings, a tokeniser of
+  tokenizer.json (its table read from the model file), a sampler and a generator, in C89; a
+  chat example for phones and computers: [docs/RUNNING-SLMS.md](docs/RUNNING-SLMS.md).
 
 ## Use
 
@@ -161,9 +162,10 @@ src/graph/        the graph, shapes and the memory plan
 src/ops/          one file per op family, and the registry
 src/kernels/      generic.c, x86.c (SSE4.1/AVX2), x86_vnni.c, neon.c, neon_dotprod.c,
                   quantize.c, select.c (which kernels this CPU runs)
-src/platform/     mapped files, threads and the CPU's fast cores (POSIX, Win32, or C89)
-src/text/         the tokeniser (tokenizer.json), its patterns and Unicode tables, the
-                  sampler and the generator
+src/platform/     mapped files and their hints, page memory, threads, the CPU's fast cores,
+                  the process's memory (POSIX, Win32, or C89)
+src/text/         the tokeniser (its table, read in place or built from tokenizer.json), its
+                  patterns and Unicode tables, the sampler and the generator
 src/model.c, src/session.c, src/sha256/
 lib/              the Dart API: bindings/, model.dart, session.dart, isolate_runner.dart, ...
 tests/            the C tests (tests/test_*.c), test models, and the real Ask models (tests/ask,
