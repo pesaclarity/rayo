@@ -3,6 +3,7 @@
 # tool/ci/*.sh; this is for trying rayo by hand (docs/RUNNING-SLMS.md).
 #
 #   make                         the chat program, for this computer
+#   make quickstart              examples/c/quickstart, the README's C example
 #   make CC=$NDK/.../aarch64-linux-android24-clang LIBS=-lm   for an Android phone
 #
 # rayo picks SIMD kernels at run time (SSE4.1, AVX2, AVX-VNNI; NEON, SDOT), so
@@ -25,6 +26,11 @@ all: examples/chat/chat
 examples/chat/chat: $(SOURCES) examples/chat/chat.c
 	$(CC) $(RAYO_FLAGS) $(CFLAGS) $(SOURCES) examples/chat/chat.c $(LIBS) -o $@
 
+quickstart: examples/c/quickstart
+
+examples/c/quickstart: $(SOURCES) examples/c/quickstart.c
+	$(CC) $(RAYO_FLAGS) $(CFLAGS) $(SOURCES) examples/c/quickstart.c $(LIBS) -o $@
+
 librayo.a: $(OBJECTS)
 	ar rcs $@ $(OBJECTS)
 
@@ -32,6 +38,6 @@ librayo.a: $(OBJECTS)
 	$(CC) $(RAYO_FLAGS) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f examples/chat/chat librayo.a $(OBJECTS)
+	rm -f examples/chat/chat examples/c/quickstart librayo.a $(OBJECTS)
 
-.PHONY: all clean
+.PHONY: all quickstart clean

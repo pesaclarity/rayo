@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The examples still build and give what they promise: examples/classifier
-# against NumPy (expected.json), and the model file is what make_model.py
-# writes.
+# and examples/c/quickstart.c against NumPy (expected.json), and the model
+# file is what make_model.py writes.
 #   tool/ci/examples.sh [CC]
 source "$(dirname "$0")/common.sh"
 
@@ -28,4 +28,22 @@ for case in want["cases"]:
     worst = max(abs(a - b) for a, b in zip(p, case["probabilities"]))
     print(f"  ids {case['ids']}: {p}, within {worst:.1e} of NumPy")
     assert worst < 1e-5, worst
+PY
+
+# examples/c/quickstart.c, the README's C example: the same probabilities
+# for ids 4 17 9, printed to six places.
+echo "== examples: quickstart, $cc"
+# shellcheck disable=SC2046
+"$cc" "${C89_FLAGS[@]}" "${HARDEN_FLAGS[@]}" "${INCLUDES[@]}" -O2 $(lib_sources) \
+  examples/c/quickstart.c -lm -lpthread -o "$out/quickstart"
+python3 - "$out/quickstart" <<'PY'
+import json, subprocess, sys
+want = json.load(open("examples/classifier/expected.json"))["cases"][0]
+assert want["ids"] == [4, 17, 9], want["ids"]
+got = subprocess.run([sys.argv[1], "examples/classifier/classifier.weights"], check=True,
+                     capture_output=True, text=True).stdout.split()
+p = [float(x) for x in got]
+worst = max(abs(a - b) for a, b in zip(p, want["probabilities"]))
+print(f"  quickstart: {p}, within {worst:.1e} of NumPy")
+assert len(p) == 3 and worst < 1e-5, (p, worst)
 PY
