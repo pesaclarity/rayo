@@ -1,0 +1,66 @@
+# A release's assets, built when a vX.Y.Z tag is pushed (or by hand for a
+# tag): the tag is checked against every version in the repository, the C
+# quickstart and the tests run, and SmolLM2-135M-Instruct is converted to a
+# q4 rayo model with its SHA-256, licence and notice (tool/release/smollm2.sh).
+# The assets are kept as this run's `release-assets` artifact; the
+# maintainer downloads them and attaches them to the release
+# (docs/RELEASING.md). This workflow never creates or edits a release, so it
+# needs no write permission.
+name: Release assets
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag to build the assets of, such as v0.1.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  assets:
+    name: assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: The tag matches the versions, the changelog and the README
+        run: tool/release/check_versions.sh "$TAG"
+      - name: C tests and the examples (the quickstart included)
+        run: |
+          python -m pip install numpy==2.5.3
+          tool/ci/test.sh gcc
+          tool/ci/examples.sh gcc
+      - name: rayo-convert
+        run: python -m pip install "./convert[chat]"
+      - name: SmolLM2-135M-Instruct, q4, with its SHA-256, licence and notice
+        run: tool/release/smollm2.sh "$RUNNER_TEMP/assets"
+      - name: Release notes and checksums
+        run: |
+          a="$RUNNER_TEMP/assets"
+          cp "docs/releases/$TAG.md" "$a/RELEASE-NOTES.md"
+          (cd "$a" && sha256sum -- *.weights *.LICENSE.txt *.NOTICE.md >SHA256SUMS)
+          {
+            echo "### Release assets for $TAG"
+            echo '```'
+            ls -l "$a"
+            cat "$a/SHA256SUMS"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/assets
+          if-no-files-found: error
+          retention-days: 30
