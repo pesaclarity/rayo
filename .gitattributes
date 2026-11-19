@@ -1,2 +1,3 @@
 *.gguf binary
 third_party/** -diff linguist-vendored
+*.cmd text eol=crlf
