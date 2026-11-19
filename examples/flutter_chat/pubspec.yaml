@@ -1,0 +1,22 @@
+name: rayo_flutter_chat
+description: A minimal Flutter app on package:rayo that loads a model and runs one prompt.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.10.0
+  flutter: '>=3.38.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  rayo:
+    path: ../..
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

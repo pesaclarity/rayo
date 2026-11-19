@@ -1,0 +1,11 @@
+.dart_tool/
+build/
+pubspec.lock
+.flutter-plugins-dependencies
+# Made by `flutter create .`; not kept in the repository.
+android/
+ios/
+linux/
+macos/
+windows/
+web/
