@@ -30,6 +30,8 @@ jobs:
         run: tool/ci/models.sh
       - name: Format, and C89 with gcc and clang
         run: tool/ci/lint.sh
+      - name: The docs against the code (API references, quickstart, links)
+        run: python tool/check_docs.py
       - name: Examples
         run: tool/ci/examples.sh gcc
       - name: The same floats from gcc -O2 and clang -O3 -mavx2 -mfma
@@ -212,6 +214,40 @@ jobs:
       - name: Chat example, built with make, a scripted conversation
         run: tool/ci/chat.sh clang
 
+  # The C library for iOS: strict C89 for the device and the simulator, an
+  # xcframework of both (a compile check), and the C tests in a simulator.
+  ios:
+    name: ios (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Xcode and the iOS SDK
+        run: |
+          {
+            xcodebuild -version
+            xcrun --sdk iphoneos --show-sdk-version
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: iphoneos and simulator builds, xcframework, the C tests in a simulator
+        run: tool/ci/ios.sh
+
+  # Windows with Microsoft's toolchain: the Win32 layer (MapViewOfFile, Win32 threads), the C
+  # tests and the quickstart, with MSVC's cl (generic C kernels) and clang-cl (the SIMD
+  # kernels, chosen at run time), every warning an error.
+  windows:
+    name: windows (${{ matrix.cc }})
+    runs-on: windows-2025
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [cl, clang-cl]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Tests and the quickstart
+        shell: cmd
+        run: tool\ci\windows.cmd ${{ matrix.cc }}
+
   android:
     name: android
     runs-on: ubuntu-24.04
@@ -252,6 +288,28 @@ jobs:
           sdk: stable
       - name: Format, analyze, test (the hook compiles the C library)
         run: tool/ci/dart.sh
+
+  # examples/flutter_chat with a pinned Flutter (the release archive, checked by its
+  # SHA-256): flutter analyze, its widget tests and a tiny model through rayo.
+  flutter-example:
+    name: flutter-example
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      FLUTTER_VERSION: "3.47.8"
+      FLUTTER_SHA256: baf7dcc5a3dbba60fe863bf493a6cf203195621f7786eaa5a1bba02cd0d87dd2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Flutter ${{ env.FLUTTER_VERSION }}
+        run: |
+          f="flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
+          curl -fsSL -o "$RUNNER_TEMP/$f" \
+            "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/$f"
+          echo "$FLUTTER_SHA256  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/flutter/bin" >>"$GITHUB_PATH"
+      - name: Format, analyze, test
+        run: tool/ci/flutter_example.sh
 
   # On main only, never blocking CI: the timings (the job summary), and the numbers of the
   # README's benchmark table as JSON (tool/ci/bench_run.sh), one file a runner.

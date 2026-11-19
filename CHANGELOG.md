@@ -4,6 +4,36 @@ Written from the conventional commit titles on `main` at each release.
 
 ## Unreleased
 
+## 0.1.0 - 2026-11-19
+
+The first release: the C library, `package:rayo` for Dart and Flutter, and rayo-convert.
+
+- **Licence:** AGPL-3.0-only with the rayo Linking Exception (`LICENSE-EXCEPTION`,
+  `AGPL-3.0-only WITH AdditionRef-rayo-linking-exception-1.0`): an app that links or embeds
+  rayo, unmodified or extended only through its public API, may be distributed under any
+  licence; changes to rayo itself stay AGPL-3.0. The exception is a draft for legal review.
+  The README's "Embedding rayo" and docs/LICENSING.md explain it.
+- **pub.dev:** `package:rayo` is ready to publish: its description, homepage, repository,
+  issue tracker, documentation and topics, a `.pubignore` (the Dart library, the C sources,
+  headers and licences only) and `example/example.dart`.
+- **Examples:** `examples/c/quickstart.c`, the README's C example (built and checked against
+  NumPy in CI, `make quickstart`), and `examples/flutter_chat`, a Flutter app that maps a
+  language model and runs one prompt in a background isolate (`flutter analyze` and its
+  widget tests in CI).
+- **CI:** iOS (the C library built for iphoneos and the simulator, an xcframework, and the C
+  tests run in a simulator) and Windows (MSVC and clang-cl, the C tests and the quickstart)
+  jobs, on pinned runners.
+- **Releases:** `.github/workflows/release.yml` checks a tag against the versions, builds the
+  release assets (a q4 file of a 135M-parameter instruct model converted by rayo-convert,
+  with its SHA-256, licence and attribution) and keeps them as the run's artifact for the
+  maintainer to attach; `tool/release/` has the same steps by hand.
+- **Benchmarks on a phone:** `tools/slm_bench.c` writes JSON (`--json`), with the model's
+  load time, prompt and decode tokens a second (medians of `--runs`) and the peak RSS;
+  `tool/bench_phone.sh` builds it with the NDK, runs it over adb and pulls the JSON.
+- **Docs:** a developer guide in `docs/` (getting started in C, Dart and Flutter, and
+  converting; concepts; the C and Dart API references; performance; licensing; FAQ;
+  troubleshooting; roadmap).
+
 - Hardened against untrusted model files and text (docs/SECURITY.md):
   - **Fixed:** a bind that failed left a node's output without its memory, so the next run
     wrote through NULL plus an offset; the tokeniser read freed memory on texts over about 128 bytes with a

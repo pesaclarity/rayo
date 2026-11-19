@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 
 tool/ci/models.sh
 tool/ci/lint.sh
+python3 tool/check_docs.py
 tool/ci/examples.sh cc
 tool/ci/convert.sh cc
 for cc in gcc clang; do
@@ -31,3 +32,4 @@ tool/ci/erf.sh cc
 tool/ci/chat.sh cc
 if [ -n "${ANDROID_NDK_HOME:-}" ]; then tool/ci/android.sh; fi
 tool/ci/dart.sh
+if command -v flutter >/dev/null; then tool/ci/flutter_example.sh; fi
