@@ -175,11 +175,13 @@ sudo apt install build-essential git python3-venv   # or your distribution's equ
 
 Then steps 1 to 3, `make` and `./examples/chat/chat models/smollm2.weights`, as on a Mac.
 
-### Windows (optional, not yet checked in CI)
+### Windows
 
 With [MSYS2](https://www.msys2.org) (MinGW-w64 shell): `pacman -S make mingw-w64-x86_64-gcc
 python`, then `make LIBS=-lm` and the same steps. The file is mapped with `MapViewOfFile` and
-the threads are Win32 threads.
+the threads are Win32 threads. CI builds and tests the C library on Windows with MSVC and
+clang-cl (`tool/ci/windows.cmd`); this MSYS2 route and the chat program are not checked
+there yet.
 
 ## What to expect
 
@@ -187,7 +189,7 @@ Measured on a 2.1 GHz Xeon (x86_64, AVX-VNNI, 4 cores shared with other work, so
 are noisy, two threads especially) with models of the real shapes, random weights and a
 synthetic tokeniser of the real vocabulary's size (`tool/make_synthetic_slm.py --tokenizer`).
 No phone has been measured yet: please send numbers from a real phone (`./chat` prints them
-on the way out). Under QEMU the chat program runs on arm64 (SDOT) and armv7 (NEON) with every
+on the way out, and `tool/bench_phone.sh` measures one over adb, docs/PERFORMANCE.md). Under QEMU the chat program runs on arm64 (SDOT) and armv7 (NEON) with every
 weight type and both caches; QEMU's times are not a phone's.
 
 **A long chat** (`examples/chat`, 2 threads, 8 to 12 turns of 64-token replies until about
