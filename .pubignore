@@ -1,0 +1,25 @@
+# What `dart pub publish` leaves out of package:rayo. A .pubignore replaces
+# .gitignore for pub, so the build outputs are listed again. The package is
+# the Dart library, the C sources its build hook compiles, their headers and
+# licences and example/: no docs (pub.dev links them on GitHub), tests,
+# tools, converter or C examples.
+.dart_tool/
+build/
+pubspec.lock
+*.so
+*.o
+*.a
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.github/
+.clang-format
+.gitattributes
+Makefile
+convert/
+examples/
+test/
+tests/
+tool/
+tools/
+docs/
