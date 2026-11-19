@@ -39,22 +39,22 @@ footer { margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.
 <header>
   <div class="brand">rayo<span>.</span><small>On-device inference in plain C89 · live
   benchmarks</small></div>
-  <div class="meta"><b>2026-11-18</b> · commit <code>cdd7f55</code><br>
+  <div class="meta"><b>2026-11-19</b> · commit <code>a1eb966</code><br>
   GitHub Actions · ubuntu-24.04 runners</div>
 </header>
 <table><thead><tr><th></th><th>x86_64<small>ubuntu-24.04, 4 vCPU</small></th><th>arm64<small>ubuntu-24.04-arm, 4 vCPU</small></th></tr></thead><tbody>
 <tr class="section"><td colspan="3">Machine</td></tr>
-<tr><td class="label">CPU</td><td class="num">AMD EPYC 9V74 80-Core</td><td class="num">Neoverse-N2</td></tr>
-<tr><td class="label">Kernels chosen at run time</td><td class="num">avx2</td><td class="num">neon-i8mm</td></tr>
+<tr><td class="label">CPU</td><td class="num">Intel Xeon 6975P-C</td><td class="num">Neoverse-N2</td></tr>
+<tr><td class="label">Kernels chosen at run time</td><td class="num">avx-vnni</td><td class="num">neon-i8mm</td></tr>
 <tr class="section"><td colspan="3">Pesa Clarity&#x27;s Ask models · int8 · 1 thread · median</td></tr>
-<tr><td class="label">Reader, per question</td><td class="num">0.27 ms</td><td class="num">0.27 ms</td></tr>
-<tr><td class="label">Writer, per reply (≈13 tokens)</td><td class="num">0.67 ms</td><td class="num">0.81 ms</td></tr>
+<tr><td class="label">Reader, per question</td><td class="num">0.16 ms</td><td class="num">0.27 ms</td></tr>
+<tr><td class="label">Writer, per reply (≈13 tokens)</td><td class="num">0.53 ms</td><td class="num">0.81 ms</td></tr>
 <tr class="section"><td colspan="3">SmolLM2-135M shape · synthetic weights† · 128-token prompt, 64 decoded</td></tr>
-<tr><td class="label">q4 prompt tokens/s (1 / 2 threads)</td><td class="num">187 / 302</td><td class="num">114 / 198</td></tr>
-<tr><td class="label">q4 decode tokens/s (1 / 2 threads)</td><td class="num">73.0 / 105</td><td class="num">55.9 / 89.6</td></tr>
+<tr><td class="label">q4 prompt tokens/s (1 / 2 threads)</td><td class="num">193 / 317</td><td class="num">113 / 198</td></tr>
+<tr><td class="label">q4 decode tokens/s (1 / 2 threads)</td><td class="num">81.0 / 134</td><td class="num">51.2 / 82.8</td></tr>
 <tr><td class="label">q4 peak memory</td><td class="num">86 MB</td><td class="num">86 MB</td></tr>
-<tr><td class="label">int8 prompt tokens/s (1 / 2 threads)</td><td class="num">308 / 496</td><td class="num">388 / 582</td></tr>
-<tr><td class="label">int8 decode tokens/s (1 / 2 threads)</td><td class="num">50.5 / 80.4</td><td class="num">86.2 / 115</td></tr>
+<tr><td class="label">int8 prompt tokens/s (1 / 2 threads)</td><td class="num">534 / 762</td><td class="num">393 / 579</td></tr>
+<tr><td class="label">int8 decode tokens/s (1 / 2 threads)</td><td class="num">95.0 / 148</td><td class="num">86.2 / 118</td></tr>
 <tr><td class="label">int8 peak memory</td><td class="num">145 MB</td><td class="num">144 MB</td></tr>
 <tr class="section"><td colspan="3">Library size · stripped · whole runtime with the language-model path</td></tr>
 <tr><td class="label">Android library (.so)</td><td class="num" colspan="2">arm64-v8a 191 KB · armeabi-v7a 152 KB · x86_64 197 KB</td></tr>

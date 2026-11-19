@@ -18,7 +18,7 @@
 <text x="32.0" y="58.0" class="brand" text-anchor="start">rayo</text>
 <circle cx="115.9" cy="55.0" r="4" class="accent"/>
 <text x="32.0" y="80.0" class="muted" text-anchor="start">On-device inference in plain C89 · live benchmarks</text>
-<text x="868.0" y="58.0" class="meta" text-anchor="end">2026-11-18 · commit cdd7f55</text>
+<text x="868.0" y="58.0" class="meta" text-anchor="end">2026-11-19 · commit a1eb966</text>
 <text x="868.0" y="80.0" class="muted" text-anchor="end">GitHub Actions · ubuntu-24.04 runners</text>
 <rect x="32" y="94.0" width="836" height="2" class="accent"/>
 <text x="382.0" y="124.0" class="th" text-anchor="start">x86_64</text>
@@ -28,44 +28,44 @@
 <rect x="32" y="156.0" width="836" height="26" class="band"/>
 <text x="42.0" y="173.0" class="section" text-anchor="start">MACHINE</text>
 <text x="42.0" y="203.0" class="label" text-anchor="start">CPU</text>
-<text x="382.0" y="203.0" class="num" text-anchor="start">AMD EPYC 9V74 80-Core</text>
+<text x="382.0" y="203.0" class="num" text-anchor="start">Intel Xeon 6975P-C</text>
 <text x="630.0" y="203.0" class="num" text-anchor="start">Neoverse-N2</text>
 <rect x="32" y="213.0" width="836" height="1" class="line"/>
 <text x="42.0" y="235.0" class="label" text-anchor="start">Kernels chosen at run time</text>
-<text x="382.0" y="235.0" class="num" text-anchor="start">avx2</text>
+<text x="382.0" y="235.0" class="num" text-anchor="start">avx-vnni</text>
 <text x="630.0" y="235.0" class="num" text-anchor="start">neon-i8mm</text>
 <rect x="32" y="245.0" width="836" height="1" class="line"/>
 <rect x="32" y="246.0" width="836" height="26" class="band"/>
 <text x="42.0" y="263.0" class="section" text-anchor="start">PESA CLARITY&#x27;S ASK MODELS · INT8 · 1 THREAD · MEDIAN</text>
 <text x="42.0" y="293.0" class="label" text-anchor="start">Reader, per question</text>
-<text x="382.0" y="293.0" class="num" text-anchor="start">0.27 ms</text>
+<text x="382.0" y="293.0" class="num" text-anchor="start">0.16 ms</text>
 <text x="630.0" y="293.0" class="num" text-anchor="start">0.27 ms</text>
 <rect x="32" y="303.0" width="836" height="1" class="line"/>
 <text x="42.0" y="325.0" class="label" text-anchor="start">Writer, per reply (≈13 tokens)</text>
-<text x="382.0" y="325.0" class="num" text-anchor="start">0.67 ms</text>
+<text x="382.0" y="325.0" class="num" text-anchor="start">0.53 ms</text>
 <text x="630.0" y="325.0" class="num" text-anchor="start">0.81 ms</text>
 <rect x="32" y="335.0" width="836" height="1" class="line"/>
 <rect x="32" y="336.0" width="836" height="26" class="band"/>
 <text x="42.0" y="353.0" class="section" text-anchor="start">SMOLLM2-135M SHAPE · SYNTHETIC WEIGHTS† · 128-TOKEN PROMPT, 64 DECODED</text>
 <text x="42.0" y="383.0" class="label" text-anchor="start">q4 prompt tokens/s (1 / 2 threads)</text>
-<text x="382.0" y="383.0" class="num" text-anchor="start">187 / 302</text>
-<text x="630.0" y="383.0" class="num" text-anchor="start">114 / 198</text>
+<text x="382.0" y="383.0" class="num" text-anchor="start">193 / 317</text>
+<text x="630.0" y="383.0" class="num" text-anchor="start">113 / 198</text>
 <rect x="32" y="393.0" width="836" height="1" class="line"/>
 <text x="42.0" y="415.0" class="label" text-anchor="start">q4 decode tokens/s (1 / 2 threads)</text>
-<text x="382.0" y="415.0" class="num" text-anchor="start">73.0 / 105</text>
-<text x="630.0" y="415.0" class="num" text-anchor="start">55.9 / 89.6</text>
+<text x="382.0" y="415.0" class="num" text-anchor="start">81.0 / 134</text>
+<text x="630.0" y="415.0" class="num" text-anchor="start">51.2 / 82.8</text>
 <rect x="32" y="425.0" width="836" height="1" class="line"/>
 <text x="42.0" y="447.0" class="label" text-anchor="start">q4 peak memory</text>
 <text x="382.0" y="447.0" class="num" text-anchor="start">86 MB</text>
 <text x="630.0" y="447.0" class="num" text-anchor="start">86 MB</text>
 <rect x="32" y="457.0" width="836" height="1" class="line"/>
 <text x="42.0" y="479.0" class="label" text-anchor="start">int8 prompt tokens/s (1 / 2 threads)</text>
-<text x="382.0" y="479.0" class="num" text-anchor="start">308 / 496</text>
-<text x="630.0" y="479.0" class="num" text-anchor="start">388 / 582</text>
+<text x="382.0" y="479.0" class="num" text-anchor="start">534 / 762</text>
+<text x="630.0" y="479.0" class="num" text-anchor="start">393 / 579</text>
 <rect x="32" y="489.0" width="836" height="1" class="line"/>
 <text x="42.0" y="511.0" class="label" text-anchor="start">int8 decode tokens/s (1 / 2 threads)</text>
-<text x="382.0" y="511.0" class="num" text-anchor="start">50.5 / 80.4</text>
-<text x="630.0" y="511.0" class="num" text-anchor="start">86.2 / 115</text>
+<text x="382.0" y="511.0" class="num" text-anchor="start">95.0 / 148</text>
+<text x="630.0" y="511.0" class="num" text-anchor="start">86.2 / 118</text>
 <rect x="32" y="521.0" width="836" height="1" class="line"/>
 <text x="42.0" y="543.0" class="label" text-anchor="start">int8 peak memory</text>
 <text x="382.0" y="543.0" class="num" text-anchor="start">145 MB</text>

@@ -7,34 +7,36 @@ Written by CI after every push to `main` ([`.github/workflows/ci.yml`](https://g
   <img alt="rayo benchmarks" src="table-light.png">
 </picture>
 
-## Latest: 2026-11-18, [`cdd7f55`](https://github.com/pesaclarity/rayo/commit/cdd7f559b6cfe88fa917d4760bebca9bdc5dad37)
+## Latest: 2026-11-19, [`a1eb966`](https://github.com/pesaclarity/rayo/commit/a1eb966e976eba144c1098dd352a81de02812449)
 
 | | **x86_64**<br>ubuntu-24.04, 4 vCPU | **arm64**<br>ubuntu-24.04-arm, 4 vCPU |
 | --- | --- | --- |
 | **Machine** | | |
-| CPU | AMD EPYC 9V74 80-Core | Neoverse-N2 |
-| Kernels chosen at run time | avx2 | neon-i8mm |
+| CPU | Intel Xeon 6975P-C | Neoverse-N2 |
+| Kernels chosen at run time | avx-vnni | neon-i8mm |
 | **Pesa Clarity's Ask models · int8 · 1 thread · median** | | |
-| Reader, per question | 0.27 ms | 0.27 ms |
-| Writer, per reply (≈13 tokens) | 0.67 ms | 0.81 ms |
+| Reader, per question | 0.16 ms | 0.27 ms |
+| Writer, per reply (≈13 tokens) | 0.53 ms | 0.81 ms |
 | **SmolLM2-135M shape · synthetic weights† · 128-token prompt, 64 decoded** | | |
-| q4 prompt tokens/s (1 / 2 threads) | 187 / 302 | 114 / 198 |
-| q4 decode tokens/s (1 / 2 threads) | 73.0 / 105 | 55.9 / 89.6 |
+| q4 prompt tokens/s (1 / 2 threads) | 193 / 317 | 113 / 198 |
+| q4 decode tokens/s (1 / 2 threads) | 81.0 / 134 | 51.2 / 82.8 |
 | q4 peak memory | 86 MB | 86 MB |
-| int8 prompt tokens/s (1 / 2 threads) | 308 / 496 | 388 / 582 |
-| int8 decode tokens/s (1 / 2 threads) | 50.5 / 80.4 | 86.2 / 115 |
+| int8 prompt tokens/s (1 / 2 threads) | 534 / 762 | 393 / 579 |
+| int8 decode tokens/s (1 / 2 threads) | 95.0 / 148 | 86.2 / 118 |
 | int8 peak memory | 145 MB | 144 MB |
 | **Library size · stripped · whole runtime with the language-model path** | | |
 | Android library (.so) | arm64-v8a 191 KB · armeabi-v7a 152 KB · x86_64 197 KB |  |
 
 † SmolLM2-135M shape with synthetic (random) weights, written by tool/make_synthetic_slm.py: every matrix product, the cache and the memory are the real model's size, but the text it writes means nothing.
 
-The run: https://github.com/pesaclarity/rayo/actions/runs/44352609817
+The run: https://github.com/pesaclarity/rayo/actions/runs/44559412367
 
 ## History (the last 10 runs; all in [history.csv](history.csv))
 
 | date | commit | runner | reader ms | writer ms | q4 decode tok/s 1 / 2 threads | int8 decode tok/s 1 / 2 threads |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-19 | [`a1eb966`](https://github.com/pesaclarity/rayo/commit/a1eb966e976eba144c1098dd352a81de02812449) | ubuntu-24.04-arm | 0.3 | 0.8 | 51.2 / 82.8 | 86.2 / 118 |
+| 2026-11-19 | [`a1eb966`](https://github.com/pesaclarity/rayo/commit/a1eb966e976eba144c1098dd352a81de02812449) | ubuntu-24.04 | 0.2 | 0.5 | 81.0 / 134 | 95.0 / 148 |
 | 2026-11-18 | [`cdd7f55`](https://github.com/pesaclarity/rayo/commit/cdd7f559b6cfe88fa917d4760bebca9bdc5dad37) | ubuntu-24.04-arm | 0.3 | 0.8 | 55.9 / 89.6 | 86.2 / 115 |
 | 2026-11-18 | [`cdd7f55`](https://github.com/pesaclarity/rayo/commit/cdd7f559b6cfe88fa917d4760bebca9bdc5dad37) | ubuntu-24.04 | 0.3 | 0.7 | 73.0 / 105 | 50.5 / 80.4 |
 | 2026-11-18 | [`ec33200`](https://github.com/pesaclarity/rayo/commit/ec33200d47f454eb128cd5ddf9ed00658af16f87) | ubuntu-24.04-arm | 0.3 | 0.8 | 51.3 / 84.6 | 67.5 / 101 |
