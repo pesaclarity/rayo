@@ -4,12 +4,19 @@
  *
  *   slm_bench MODEL.weights [P] [D] [threads] [--kv int8|float32]
  *             [--context N] [--chunk N] [--access normal|sequential|willneed|random]
- *             [--kernels generic|simd|best]
+ *             [--kernels generic|simd|best] [--runs N] [--json FILE] [--label TEXT]
  *
  * --context (default 1024) and --chunk (default 32) are at most the
  * model's; --kernels (default best) picks the kernel set, as the Ask
  * benchmarks do (simd: what an ARMv8.0 phone runs). Prints prompt and decode tokens a second, the
- * peak private memory (the process's own) and mapped-file memory, and the peak RSS. */
+ * peak private memory (the process's own) and mapped-file memory, and the peak RSS.
+ *
+ * --runs N (default 1) runs the prompt and the decode N times, the cache
+ * reset between, and reports the medians. --json FILE also writes the
+ * results as JSON (tool/bench_phone.sh reads it): the model's load time
+ * (mapping and checking the file) and the session's, prompt (prefill) and
+ * decode tokens a second, each run's too, and the memory; --label names the
+ * device in it. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +25,32 @@
 #endif
 
 #include "bench.h"
+
+#define MAX_RUNS 64
+
+/* `s` as a JSON string (quotes, backslashes and control characters escaped). */
+static void json_string(FILE *f, const char *s) {
+  fputc('"', f);
+  for (; s && *s; s++) {
+    const unsigned char c = (unsigned char)*s;
+    if (c == '"' || c == '\\') {
+      fputc('\\', f);
+      fputc(c, f);
+    } else if (c < 0x20) {
+      fprintf(f, "\\u%04x", (unsigned)c);
+    } else {
+      fputc(c, f);
+    }
+  }
+  fputc('"', f);
+}
+
+static void json_list(FILE *f, const double *v, int n) {
+  int i;
+  fputc('[', f);
+  for (i = 0; i < n; i++) fprintf(f, "%s%.2f", i ? ", " : "", v[i]);
+  fputc(']', f);
+}
 
 static double peak_mb(void) {
 #if defined(__unix__) || defined(__APPLE__)
@@ -80,9 +113,10 @@ int main(int argc, char **argv) {
   rayo_memory_info mem;
   rayo_i32 num[4] = {0, 128, 64, 1};
   rayo_i32 prompt, decode, chunk = 32, context = 1024, vocab, i, at = 0, *ids;
-  int a, positional = 0;
-  const char *path = NULL, *kernels = NULL;
-  double t0, t_load, t_prompt, t_decode, rss_load;
+  int a, positional = 0, runs = 1, r;
+  const char *path = NULL, *kernels = NULL, *json = NULL, *label = "";
+  double t0, t_load, t_model, t_prompt, t_decode, rss_load;
+  double prompt_tok_s[MAX_RUNS], decode_tok_s[MAX_RUNS], sorted[MAX_RUNS];
   memset(&o, 0, sizeof o);
   memset(&mo, 0, sizeof mo);
   for (a = 1; a < argc; a++) {
@@ -94,6 +128,14 @@ int main(int argc, char **argv) {
       chunk = atoi(argv[++a]);
     } else if (strcmp(argv[a], "--kernels") == 0 && a + 1 < argc) {
       kernels = argv[++a];
+    } else if (strcmp(argv[a], "--runs") == 0 && a + 1 < argc) {
+      runs = atoi(argv[++a]);
+      if (runs < 1) runs = 1;
+      if (runs > MAX_RUNS) runs = MAX_RUNS;
+    } else if (strcmp(argv[a], "--json") == 0 && a + 1 < argc) {
+      json = argv[++a];
+    } else if (strcmp(argv[a], "--label") == 0 && a + 1 < argc) {
+      label = argv[++a];
     } else if (strcmp(argv[a], "--access") == 0 && a + 1 < argc) {
       const char *v = argv[++a];
       mo.access = strcmp(v, "normal") == 0       ? RAYO_ACCESS_NORMAL
@@ -111,7 +153,7 @@ int main(int argc, char **argv) {
     fprintf(stderr,
             "usage: slm_bench MODEL.weights [prompt] [decode] [threads] [--kv int8|float32] "
             "[--context N] [--chunk N] [--access normal|sequential|willneed|random] "
-            "[--kernels generic|simd|best]\n");
+            "[--kernels generic|simd|best] [--runs N] [--json FILE] [--label TEXT]\n");
     return 2;
   }
   prompt = num[1];
@@ -122,6 +164,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "slm_bench: %s\n", msg.text);
     return 1;
   }
+  t_model = bench_now_ms() - t0;
   /* As a generator sizes its session: the cache for `context` tokens, the
    * working memory for a chunk at its end. */
   rayo_model_input_info(m, 0, &in);
@@ -158,21 +201,31 @@ int main(int argc, char **argv) {
   if (!ids) return 1;
   srand(7);
   for (i = 0; i < prompt; i++) ids[i] = rand() % vocab;
-  t0 = bench_now_ms();
-  while (at < prompt) {
-    const rayo_i32 c = prompt - at < chunk ? prompt - at : chunk;
-    if (!step(s, ids + at, at, c)) return 1;
-    at += c;
+  for (r = 0; r < runs; r++) {
+    rayo_session_reset(s);
+    at = 0;
+    t0 = bench_now_ms();
+    while (at < prompt) {
+      const rayo_i32 c = prompt - at < chunk ? prompt - at : chunk;
+      if (!step(s, ids + at, at, c)) return 1;
+      at += c;
+    }
+    t_prompt = bench_now_ms() - t0;
+    t0 = bench_now_ms();
+    for (i = 0; i < decode; i++) {
+      rayo_session_output(s, 0, &out);
+      ids[at] = argmax(out.data, vocab);
+      if (!step(s, ids + at, at, 1)) return 1;
+      at++;
+    }
+    t_decode = bench_now_ms() - t0;
+    prompt_tok_s[r] = prompt * 1000.0 / t_prompt;
+    decode_tok_s[r] = decode * 1000.0 / t_decode;
   }
-  t_prompt = bench_now_ms() - t0;
-  t0 = bench_now_ms();
-  for (i = 0; i < decode; i++) {
-    rayo_session_output(s, 0, &out);
-    ids[at] = argmax(out.data, vocab);
-    if (!step(s, ids + at, at, 1)) return 1;
-    at++;
-  }
-  t_decode = bench_now_ms() - t0;
+  memcpy(sorted, prompt_tok_s, (size_t)runs * sizeof *sorted);
+  t_prompt = bench_quantile(sorted, (size_t)runs, 0.5);
+  memcpy(sorted, decode_tok_s, (size_t)runs * sizeof *sorted);
+  t_decode = bench_quantile(sorted, (size_t)runs, 0.5);
   if (getenv("RAYO_BENCH_OPS")) {
     /* Where a decode step's time goes, op by op. */
     double *op_ms = calloc((size_t)s->model->graph.node_count, sizeof *op_ms);
@@ -191,12 +244,50 @@ int main(int argc, char **argv) {
       "%s threads=%d kernels=%s kv=%s context=%ld chunk=%ld load_ms=%.0f prompt=%ld "
       "prompt_tok_s=%.1f decode=%ld decode_tok_s=%.2f file_mb=%.1f arena_mb=%.1f "
       "rss_after_load_mb=%.1f peak_private_mb=%.1f peak_file_resident_mb=%.1f "
-      "peak_rss_mb=%.1f\n",
+      "peak_rss_mb=%.1f runs=%d\n",
       rayo_model_name(m), rayo_session_threads(s), rayo_session_kernels(s),
       o.cache == RAYO_CACHE_INT8 ? "int8" : "float32", (long)context, (long)chunk, t_load,
-      (long)prompt, prompt * 1000.0 / t_prompt, (long)decode, decode * 1000.0 / t_decode,
-      (double)mem.weights / 1048576.0, (double)mem.arena / 1048576.0, rss_load,
-      (double)peak.private_bytes / 1048576.0, (double)peak.file_bytes / 1048576.0, peak_mb());
+      (long)prompt, t_prompt, (long)decode, t_decode, (double)mem.weights / 1048576.0,
+      (double)mem.arena / 1048576.0, rss_load, (double)peak.private_bytes / 1048576.0,
+      (double)peak.file_bytes / 1048576.0, peak_mb(), runs);
+  if (json) {
+    FILE *f = fopen(json, "w");
+    if (!f) {
+      fprintf(stderr, "slm_bench: cannot write %s\n", json);
+      return 1;
+    }
+    fputs("{\n  \"tool\": \"slm_bench\",\n  \"rayo\": ", f);
+    json_string(f, rayo_version_string());
+    fputs(",\n  \"label\": ", f);
+    json_string(f, label);
+    fputs(",\n  \"model\": ", f);
+    json_string(f, rayo_model_name(m));
+    fputs(",\n  \"model_path\": ", f);
+    json_string(f, path);
+    fputs(",\n  \"kernels\": ", f);
+    json_string(f, rayo_session_kernels(s));
+    fprintf(f,
+            ",\n  \"threads\": %d,\n  \"fast_cores\": %d,\n  \"kv\": \"%s\",\n"
+            "  \"context\": %ld,\n  \"chunk\": %ld,\n  \"prompt_tokens\": %ld,\n"
+            "  \"decode_tokens\": %ld,\n  \"runs\": %d,\n"
+            "  \"model_load_ms\": %.2f,\n  \"session_ms\": %.2f,\n  \"load_ms\": %.2f,\n"
+            "  \"prefill_tok_s\": %.2f,\n  \"decode_tok_s\": %.2f,\n",
+            rayo_session_threads(s), rayo_cpu_fast_cores(),
+            o.cache == RAYO_CACHE_INT8 ? "int8" : "float32", (long)context, (long)chunk,
+            (long)prompt, (long)decode, runs, t_model, t_load - t_model, t_load, t_prompt,
+            t_decode);
+    fputs("  \"prefill_tok_s_runs\": ", f);
+    json_list(f, prompt_tok_s, runs);
+    fputs(",\n  \"decode_tok_s_runs\": ", f);
+    json_list(f, decode_tok_s, runs);
+    fprintf(f,
+            ",\n  \"file_mb\": %.2f,\n  \"arena_mb\": %.2f,\n"
+            "  \"rss_after_load_mb\": %.2f,\n  \"peak_private_mb\": %.2f,\n"
+            "  \"peak_file_resident_mb\": %.2f,\n  \"peak_rss_mb\": %.2f\n}\n",
+            (double)mem.weights / 1048576.0, (double)mem.arena / 1048576.0, rss_load,
+            (double)peak.private_bytes / 1048576.0, (double)peak.file_bytes / 1048576.0, peak_mb());
+    if (fclose(f) != 0) return 1;
+  }
   free(ids);
   rayo_session_destroy(s);
   rayo_model_destroy(m);
