@@ -200,7 +200,10 @@ static void cache_and_chunks(void) {
     memcpy(lf, out.data, vocab * sizeof *lf);
     rayo_session_output(q, 0, &out);
     memcpy(lq, out.data, vocab * sizeof *lq);
-    w = worst_of(lf, lq, vocab, &t) / (t > 0 ? t : 1);
+    /* Two statements: the call sets t, and C does not order a call's
+     * side effects before the other operand of /. */
+    w = worst_of(lf, lq, vocab, &t);
+    w /= t > 0 ? t : 1;
     worst_q = w > worst_q ? w : worst_q;
     for (j = 1; j < vocab; j++) {
       if (lf[j] > lf[bf]) bf = j;
