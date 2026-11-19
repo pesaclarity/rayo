@@ -1,0 +1,98 @@
+rayo Linking Exception, version 1.0
+
+SPDX-License-Identifier: AGPL-3.0-only WITH AdditionRef-rayo-linking-exception-1.0
+
+  +--------------------------------------------------------------------+
+  | DRAFT. Written for the copyright holders to have reviewed by a     |
+  | lawyer before rayo v0.1.0 is tagged. Until that review is done and |
+  | this notice is removed, treat this text as a statement of intent.  |
+  +--------------------------------------------------------------------+
+
+This is an additional permission under section 7 of the GNU Affero General
+Public License, version 3 ("AGPLv3"), given by the copyright holders of rayo.
+It is modelled on the GCC Runtime Library Exception and the GNU Classpath
+exception, adapted to the AGPLv3. It does not change the licence of rayo
+itself: rayo, and every modified version of it, is licensed under the AGPLv3
+alone. It only says what the licence of a program that uses rayo may be.
+
+0. Definitions
+
+"The Library" means the rayo runtime as released by its copyright holders:
+the files under include/, src/, lib/ and hook/ of the rayo repository
+(https://github.com/pesaclarity/rayo), and the libraries and the Dart
+package (package:rayo) built from them. rayo-convert (convert/), the tests,
+the tools and the examples are not part of the Library.
+
+"The Public API" means the functions, types, constants and macros declared
+in the headers under include/rayo/, and the Dart declarations exported by
+lib/rayo.dart, as documented in those files and in docs/.
+
+"A Permitted Configuration" of the Library is the Library with no change to
+its source files other than:
+
+  a) setting the compile-time options that include/rayo/config.h documents,
+     or the macros the documentation names for choosing a platform layer
+     or kernels (such as RAYO_NO_PLATFORM);
+  b) building it with any compiler, flags, linker or build system, for any
+     target, as a static library, a shared library or as object files; and
+  c) extending it only through the Public API, such as ops of your own
+     given to rayo_model_create_with through include/rayo/op.h.
+
+"An Application" means a work that uses the Library only through the Public
+API, and that contains no part of the Library other than what including the
+Library's headers or importing package:rayo puts in it.
+
+"A Combined Work" means an Application linked with, or packaged together
+with, the Library in a Permitted Configuration, statically or dynamically,
+in one executable or in one package (such as an Android APK or App Bundle,
+an iOS or macOS app, or a desktop program and its libraries).
+
+1. Permission
+
+You may convey a Combined Work under terms of your choice, and you may
+convey the Application's own parts under any licence, provided that you
+meet both of these conditions for the copy of the Library in it:
+
+  a) Notices. The Combined Work, or the documentation or "about" or
+     "licences" screen that comes with it, says that it uses rayo, names
+     the version, and gives the Library's copyright notices, the text of
+     the AGPLv3 (or a link to it), this exception (or a link to it), and
+     the notices in LICENSES/.
+
+  b) Source. Anyone who receives the Combined Work can get the
+     Corresponding Source of the copy of the Library in it, under the
+     AGPLv3. For a copy of the Library released by its copyright holders
+     and configured only as in 0 a) and b), a link to that release (such
+     as https://github.com/pesaclarity/rayo/tree/v0.1.0) together with the
+     compile-time options you set satisfies this condition. Source code for
+     the Application's own parts is not required.
+
+Nothing in this exception requires you to allow the Combined Work to be
+reverse engineered, or to let users replace the Library in it, and its
+terms may restrict copying and distribution (for example, an app store's
+terms) as long as they do not restrict the Library's own rights under the
+AGPLv3.
+
+2. Network use
+
+Section 13 of the AGPLv3 applies to the Library and to modified versions of
+it. For a Combined Work that meets condition 1, it is met by condition 1 b),
+and it does not extend to the Application's own parts, whether users
+interact with the Combined Work over a network or not.
+
+3. Modified versions
+
+If you change the Library's source files other than as a Permitted
+Configuration allows, this exception does not apply to the changed
+Library, and a work that includes it is covered by the AGPLv3 as a whole.
+The changed Library stays under the AGPLv3. You may offer your changes to
+the project as a pull request; once they are part of a release by the
+copyright holders, that release is covered by this exception.
+
+4. No other effect
+
+This exception does not take away any permission the AGPLv3 gives, and it
+does not change the licence of anything but the Combined Work and the
+Application's own parts as described above. As section 7 of the AGPLv3
+allows, when you convey a copy of the Library (modified or not), you may
+remove this additional permission from that copy.
