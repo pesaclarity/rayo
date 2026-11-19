@@ -1,1 +1,7 @@
 include: package:lints/recommended.yaml
+
+analyzer:
+  # The Flutter example is its own package, analyzed with Flutter
+  # (tool/ci/flutter_example.sh).
+  exclude:
+    - examples/**

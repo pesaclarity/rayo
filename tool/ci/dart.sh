@@ -5,7 +5,7 @@ source "$(dirname "$0")/common.sh"
 
 echo "== Dart"
 dart pub get
-dart format --output=none --set-exit-if-changed lib test hook
+dart format --output=none --set-exit-if-changed lib test hook example
 dart analyze --fatal-infos
 dart test
 # The library the build hook compiled, built hardened (Linux: an ELF).
