@@ -8,3 +8,4 @@ __pycache__/
 .pytest_cache/
 examples/chat/chat
 *.a
+examples/c/quickstart
