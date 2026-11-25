@@ -24,7 +24,7 @@ HARDEN_FLAGS=(-fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -Wf
 HARDEN_LDFLAGS=(-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
 
 lib_sources() { find src -name '*.c' | LC_ALL=C sort; }
-c_files() { find include src tests tools examples -name '*.[ch]' | LC_ALL=C sort; }
+c_files() { find include src tests tools examples wasm -name '*.[ch]' | LC_ALL=C sort; }
 
 # Whether linking with --wrap works here (GNU ld, lld; not Apple's ld64).
 can_wrap() {

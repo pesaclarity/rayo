@@ -74,13 +74,14 @@ and `-lm -lpthread` ([Getting started](docs/GETTING-STARTED.md#c)). Dart and Flu
   -pedantic -Werror` ([C89](#c89)). No C++, no Google code (no TFLite/LiteRT, no XNNPACK), no
   other library. A Dart build hook compiles `src/` with the platform's C compiler (the NDK,
   Xcode, clang/gcc): nothing is downloaded or prebuilt, so F-Droid builds it offline. SIMD
-  intrinsics live only in `src/kernels/x86*.c` and `src/kernels/neon*.c`, and the system's
+  intrinsics live only in `src/kernels/x86*.c`, `src/kernels/neon*.c` and `src/kernels/wasm_simd.c`, and the system's
   headers (mmap, threads, the CPU's cores) only in `src/platform/`, with plain C89 fallbacks.
 - **Every common CPU, the best kernels picked at run time.** Generic C everywhere; SSE4.1,
   AVX2 and AVX-VNNI on x86; NEON, the ARMv8.2 dot product (SDOT) and the ARMv8.6 int8 matrix
   multiply (SMMLA, i8mm) on ARM, chosen from what the CPU has when the program runs ([Kernels](#kernels)). Android (arm64-v8a, armeabi-v7a,
   x86_64), Linux (x86_64, arm64, armv7), macOS (Apple silicon, Intel), iOS (device and
-  simulator) and Windows (MSVC, clang-cl) are built and tested in CI.
+  simulator), Windows (MSVC, clang-cl) and WebAssembly (wasi-sdk, generic and SIMD128, for
+  Node, Workers and browsers: [docs/WASM.md](docs/WASM.md)) are built and tested in CI.
 - **int8, int4 and int3 weights.** int8 layers run exactly as TFLite's dynamic-range kernels
   (the Ask reader and writer give TFLite's outputs); language models' matrices in 4-bit
   groups of 32 with float16 scales ([docs/FORMAT.md](docs/FORMAT.md#int4-tensors)), some in
@@ -230,6 +231,7 @@ What it means for an app:
 | Android (Kotlin, Java) | `src/` built into your native library with CMake or ndk-build, called over JNI | notices in the app's licences screen, with a link to rayo's source |
 | iOS, macOS (Swift) | `src/` in an Xcode target, or a static library or xcframework, through a bridging header | the same; App Store terms are fine for the combined app |
 | Desktop, servers | `src/` compiled with your program, or `make librayo.a` | notices with the program; AGPL's network clause stays with rayo, not your code |
+| Web, Node, Workers (WebAssembly) | `rayo.wasm` from `wasm/build.sh`, loaded by `wasm/rayo.mjs` ([docs/WASM.md](docs/WASM.md)) | the same notices with what you ship, and a link to rayo's source |
 
 In every case the app must say it uses rayo (and which version), carry rayo's licence notices
 (the AGPL-3.0, the exception and `LICENSES/`), and let people get rayo's source: a link to the
@@ -342,7 +344,8 @@ src/format/       the PCWT reader and its checks
 src/graph/        the graph, shapes and the memory plan
 src/ops/          one file per op family, and the registry
 src/kernels/      generic.c, x86.c (SSE4.1/AVX2), x86_vnni.c, neon.c, neon_dotprod.c,
-                  neon_i8mm.c, quantize.c, select.c (which kernels this CPU runs)
+                  neon_i8mm.c, wasm_simd.c (SIMD128), quantize.c, select.c (which kernels
+                  this CPU runs)
 src/platform/     mapped files and their hints, page memory, threads, the CPU's fast cores,
                   the process's memory (POSIX, Win32, or C89)
 src/text/         the tokeniser (its table, read in place or built from tokenizer.json), its
@@ -375,6 +378,8 @@ generic one in the tests (the 4-bit ones bit for bit):
 | Android x86_64 | SSE4.1 | AVX2 (without its decoder product, for size), AVX-VNNI |
 | Linux x86_64 | AVX2 | AVX-VNNI |
 | macOS x86_64, any x86 built with gcc or clang | what the flags give | SSE4.1, AVX2, AVX-VNNI |
+| WebAssembly, `rayo.wasm` | generic C | |
+| WebAssembly, `rayo-simd.wasm` (`-msimd128`) | SIMD128 for int8 (the rest autovectorised by clang) | |
 
 ## Speed
 
@@ -466,7 +471,10 @@ armv7 under QEMU, on macOS arm64, iOS (the library for the device and the simula
 xcframework, and the C tests in a simulator, `tool/ci/ios.sh`), Windows (MSVC and clang-cl,
 the C tests and the quickstart, `tool/ci/windows.cmd`), the Android NDK builds (hardened,
 checked with readelf) with a size budget, the Dart package on Linux and macOS, and the
-Flutter example (`flutter analyze` and its tests, with a pinned Flutter). `fuzz` runs the libFuzzer targets for a
+Flutter example (`flutter analyze` and its tests, with a pinned Flutter), and WebAssembly
+(`tool/ci/wasm.sh`: wasi-sdk's generic and SIMD128 builds, the C tests under wasmtime with
+each kernel set, and the Ask reader in Node through `wasm/rayo.mjs`, against TFLite's outputs
+and bit for bit between the two builds). `fuzz` runs the libFuzzer targets for a
 minute each, and `analyze` the clang static analyzer and cppcheck
 ([docs/SECURITY.md](docs/SECURITY.md#how-it-is-checked)). On `main` the bench jobs report the timings in the job summary
 and publish the [benchmark table](#benchmarks). The `convert` job runs
@@ -475,7 +483,7 @@ rayo-convert's tests and converts the Ask models from TFLite and runs them.
 To protect `main`, require these checks: `lint`, `convert`, `linux-x86_64 (gcc)`, `linux-x86_64 (clang)`,
 `sanitizers`, `linux-arm64`, `linux-armv7`, `macos (macos-15)`, `macos (macos-15-intel)`,
 `ios (macos-15)`, `windows (cl)`, `windows (clang-cl)`, `android`, `dart (ubuntu-24.04)`,
-`dart (macos-15)`, `flutter-example`, `fuzz`, `analyze`. The chat example runs a scripted
+`dart (macos-15)`, `flutter-example`, `fuzz`, `analyze`, `wasm`. The chat example runs a scripted
 conversation in the Linux, arm64, armv7 and macOS jobs (`tool/ci/chat.sh`).
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/); the changelog is

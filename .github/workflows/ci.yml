@@ -134,6 +134,33 @@ jobs:
       - name: clang --analyze and cppcheck
         run: tool/ci/analyze.sh
 
+  wasm:
+    name: wasm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      WASI_SDK: ${{ github.workspace }}/../wasi-sdk
+      WASMTIME: ${{ github.workspace }}/../wasmtime/wasmtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: wasi-sdk 25 and wasmtime 27 (checked against their SHA-256)
+        run: |
+          cd ..
+          curl -sSfL -o wasi-sdk.tar.gz \
+            https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
+          curl -sSfL -o wasmtime.tar.xz \
+            https://github.com/bytecodealliance/wasmtime/releases/download/v27.0.0/wasmtime-v27.0.0-x86_64-linux.tar.xz
+          sha256sum -c - <<'SUMS'
+          52640dde13599bf127a95499e61d6d640256119456d1af8897ab6725bcf3d89c  wasi-sdk.tar.gz
+          74678f6ec49d8b858ca5181d5492b967245f6c072b5763ea14a75eee1ad3c2d7  wasmtime.tar.xz
+          SUMS
+          mkdir wasi-sdk wasmtime
+          tar xzf wasi-sdk.tar.gz -C wasi-sdk --strip-components=1
+          tar xJf wasmtime.tar.xz -C wasmtime --strip-components=1
+          node --version
+      - name: Generic and SIMD128 builds, the C tests under wasmtime, the Ask reader in Node
+        run: tool/ci/wasm.sh
+
   linux-arm64:
     name: linux-arm64
     runs-on: ubuntu-24.04-arm
