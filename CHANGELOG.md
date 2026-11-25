@@ -4,6 +4,18 @@ Written from the conventional commit titles on `main` at each release.
 
 ## Unreleased
 
+- **WebAssembly:** `wasm/build.sh` builds rayo with wasi-sdk into two reactor modules with no
+  imports, `rayo.wasm` (generic C) and `rayo-simd.wasm` (`-msimd128`), for Node, Deno,
+  Workers and browsers ([docs/WASM.md](docs/WASM.md)). `wasm/rayo_wasm.c` is a small C ABI
+  for JavaScript hosts (`rayo_wasm_open`, `_bind`, `_input`, `_run`, `_output`, `_close`),
+  `wasm/rayo.mjs` a host for it, and `examples/wasm/ask_reader.mjs` runs the Ask reader with
+  it. On the Ask reader in Node the SIMD128 build is about six times faster than the generic
+  one (1.0 against 6.1 ms a run).
+- **Kernels:** an int8 kernel for WebAssembly SIMD128 (`src/kernels/wasm_simd.c`), chosen
+  when built with `-msimd128` and tested against the generic kernel bit for bit.
+- **CI:** a `wasm` job builds both modules, runs the C tests under wasmtime with each kernel
+  set, and the Ask reader in Node against TFLite's outputs and bit for bit across the builds.
+
 ## 0.1.0 - 2026-11-19
 
 The first release: the C library, `package:rayo` for Dart and Flutter, and rayo-convert.

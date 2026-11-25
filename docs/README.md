@@ -26,6 +26,8 @@ Everything about using rayo, from a first run to shipping it in an app. Start wi
 - [Performance and benchmarks](PERFORMANCE.md): where every number comes from, and measuring
   a phone.
 - [Security](SECURITY.md): the threat model, what rayo guarantees, and signed models.
+- [WebAssembly](WASM.md): rayo in Node, Workers and browsers, built with wasi-sdk, and its
+  JavaScript host.
 - [Licensing and embedding](LICENSING.md): AGPL-3.0 with the linking exception, for apps on
   every platform.
 

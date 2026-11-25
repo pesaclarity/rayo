@@ -225,6 +225,10 @@ void test_kernels(void) {
     check_q4(rayo_gemm_q4_avx2, rayo_gemm_q3_avx2, "avx2 (run time)");
   }
 #endif
+#if defined(RAYO_KERNELS_WASM_SIMD)
+  /* Whatever the build's set: the SIMD128 kernel itself. */
+  check_i8(rayo_gemm_i8_wasm_simd128, 0, "wasm-simd128");
+#endif
 #if defined(RAYO_KERNELS_X86_VNNI)
   if (!rayo_cpu_has_avxvnni()) printf("  avx-vnni: this CPU has none, not run\n");
 #endif

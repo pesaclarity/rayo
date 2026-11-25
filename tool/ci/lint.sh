@@ -11,7 +11,7 @@ for cc in gcc clang; do
   command -v "$cc" >/dev/null || continue
   echo "== C89 with $cc"
   # tests/erf is C99 on purpose: it calls the C library's erf (tool/ci/erf.sh).
-  for f in $(find src tests tools examples -name '*.c' -not -path 'tests/erf/*' | LC_ALL=C sort); do
+  for f in $(find src tests tools examples wasm -name '*.c' -not -path 'tests/erf/*' | LC_ALL=C sort); do
     "$cc" "${C89_FLAGS[@]}" "${INCLUDES[@]}" -Itests -Itools -DRAYO_TEST_COUNT_ALLOCS \
       -fsyntax-only "$f"
   done

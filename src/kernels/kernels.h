@@ -1,9 +1,9 @@
 /* The numeric kernels. Each has a portable C version (generic.c) and, where
  * the compiler targets it, SIMD ones (x86.c: SSE4.1 or AVX2; neon.c: NEON on
- * arm64 and armv7; x86_vnni.c, neon_dotprod.c and neon_i8mm.c: dot-product
- * and matrix instructions chosen at run time). The tests run every SIMD kernel against the generic
- * one. Only the SIMD files use compiler extensions (intrinsics, target
- * attributes, CPU checks); everything here is C89. */
+ * arm64 and armv7; wasm_simd.c: WebAssembly SIMD128; x86_vnni.c, neon_dotprod.c and neon_i8mm.c:
+ * dot-product and matrix instructions chosen at run time). The tests run every SIMD kernel against
+ * the generic one. Only the SIMD files use compiler extensions (intrinsics, target attributes, CPU
+ * checks); everything here is C89. */
 #ifndef RAYO_KERNELS_H
 #define RAYO_KERNELS_H
 
@@ -112,6 +112,13 @@ rayo_gemm_i8_fn rayo_gemm_u8i8_avxvnni;
 /* Whether this CPU (and OS) runs AVX-VNNI. */
 rayo_bool rayo_cpu_has_avxvnni(void);
 #endif
+#endif
+
+#if defined(__wasm_simd128__)
+#define RAYO_KERNELS_WASM_SIMD 1
+/* wasm_simd.c: WebAssembly SIMD128 (-msimd128); wasm has no CPU check, so
+ * the build decides. */
+rayo_gemm_i8_fn rayo_gemm_i8_wasm_simd128;
 #endif
 
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
