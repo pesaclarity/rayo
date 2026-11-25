@@ -1,9 +1,9 @@
 {
   "kind": "rayo-bench-run",
   "schema": 1,
-  "commit": "a1eb966e976eba144c1098dd352a81de02812449",
-  "date": "2026-11-19T16:05:30Z",
-  "run_url": "https://github.com/pesaclarity/rayo/actions/runs/44559412367",
+  "commit": "0d699efcee7216698b3438cdab65139344456741",
+  "date": "2026-11-25T07:51:32Z",
+  "run_url": "https://github.com/pesaclarity/rayo/actions/runs/45569471897",
   "synthetic_note": "SmolLM2-135M shape with synthetic (random) weights, written by tool/make_synthetic_slm.py: every matrix product, the cache and the memory are the real model's size, but the text it writes means nothing.",
   "note": "GitHub-hosted runners are shared virtual machines: these numbers are indicative and vary from run to run. They are not a phone's.",
   "runners": [
@@ -28,14 +28,14 @@
       "kernels": "avx-vnni",
       "ask": {
         "reader": {
-          "per_question_median_ms": 0.1582,
-          "per_question_p90_ms": 0.1667,
+          "per_question_median_ms": 0.1581,
+          "per_question_p90_ms": 0.1664,
           "runs": 5
         },
         "writer": {
-          "per_reply_median_ms": 0.527,
-          "per_reply_p90_ms": 0.774,
-          "per_step_median_ms": 0.04,
+          "per_reply_median_ms": 0.524,
+          "per_reply_p90_ms": 0.764,
+          "per_step_median_ms": 0.0399,
           "runs": 5
         }
       },
@@ -47,9 +47,9 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 193.4,
-          "decode_tok_s": 81.01,
-          "peak_rss_mb": 86.2,
+          "prompt_tok_s": 193.1,
+          "decode_tok_s": 67.03,
+          "peak_rss_mb": 86.1,
           "file_mb": 72.4,
           "runs": 3
         },
@@ -60,9 +60,9 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 316.9,
-          "decode_tok_s": 133.66,
-          "peak_rss_mb": 86.2,
+          "prompt_tok_s": 317.4,
+          "decode_tok_s": 94.95,
+          "peak_rss_mb": 86.1,
           "file_mb": 72.4,
           "runs": 3
         },
@@ -73,9 +73,9 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 533.6,
-          "decode_tok_s": 95.01,
-          "peak_rss_mb": 145.1,
+          "prompt_tok_s": 526.4,
+          "decode_tok_s": 85.3,
+          "peak_rss_mb": 145.0,
           "file_mb": 129.2,
           "runs": 3
         },
@@ -86,9 +86,9 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 762.3,
-          "decode_tok_s": 147.82,
-          "peak_rss_mb": 145.0,
+          "prompt_tok_s": 747.4,
+          "decode_tok_s": 134.12,
+          "peak_rss_mb": 145.1,
           "file_mb": 129.2,
           "runs": 3
         }
@@ -116,14 +116,14 @@
       "kernels": "neon-i8mm",
       "ask": {
         "reader": {
-          "per_question_median_ms": 0.2689,
-          "per_question_p90_ms": 0.2734,
+          "per_question_median_ms": 0.2687,
+          "per_question_p90_ms": 0.2723,
           "runs": 5
         },
         "writer": {
-          "per_reply_median_ms": 0.81,
-          "per_reply_p90_ms": 1.184,
-          "per_step_median_ms": 0.0624,
+          "per_reply_median_ms": 0.813,
+          "per_reply_p90_ms": 1.198,
+          "per_step_median_ms": 0.0626,
           "runs": 5
         }
       },
@@ -135,8 +135,8 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 113.4,
-          "decode_tok_s": 51.25,
+          "prompt_tok_s": 114.0,
+          "decode_tok_s": 53.41,
           "peak_rss_mb": 85.5,
           "file_mb": 72.4,
           "runs": 3
@@ -148,8 +148,8 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 197.6,
-          "decode_tok_s": 82.78,
+          "prompt_tok_s": 198.0,
+          "decode_tok_s": 88.18,
           "peak_rss_mb": 85.5,
           "file_mb": 72.4,
           "runs": 3
@@ -161,8 +161,8 @@
           "threads": 1,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 392.9,
-          "decode_tok_s": 86.24,
+          "prompt_tok_s": 394.8,
+          "decode_tok_s": 95.39,
           "peak_rss_mb": 144.3,
           "file_mb": 129.2,
           "runs": 3
@@ -174,8 +174,8 @@
           "threads": 2,
           "prompt_tokens": 128,
           "decode_tokens": 64,
-          "prompt_tok_s": 579.4,
-          "decode_tok_s": 117.86,
+          "prompt_tok_s": 585.9,
+          "decode_tok_s": 125.2,
           "peak_rss_mb": 144.3,
           "file_mb": 129.2,
           "runs": 3
