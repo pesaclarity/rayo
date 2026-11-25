@@ -24,6 +24,9 @@ void rayo_kernels_simd(rayo_kernels *out) {
   out->gemm_i8 = rayo_gemm_i8_sse41;
   out->gemm_q4 = rayo_gemm_q4_sse41;
   out->gemm_q3 = rayo_gemm_q3_sse41;
+#elif defined(__wasm_simd128__)
+  out->name = "wasm-simd128";
+  out->gemm_i8 = rayo_gemm_i8_wasm;
 #elif defined(RAYO_KERNELS_NEON)
   out->name = "neon";
   out->gemm_i8 = rayo_gemm_i8_neon;

@@ -1,0 +1,9 @@
+{
+  "name": "rayo-spike",
+  "main": "./dist/index.mjs",
+  "no_bundle": true,
+  "compatibility_date": "2026-01-01",
+  "r2_buckets": [{ "binding": "MODELS", "bucket_name": "rayo-models" }],
+  "durable_objects": { "bindings": [{ "name": "READER", "class_name": "Reader" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Reader"] }]
+}

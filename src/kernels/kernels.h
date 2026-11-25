@@ -63,6 +63,9 @@ typedef void rayo_gemm_q4_fn(const rayo_i8 *RAYO_RESTRICT a, const float *RAYO_R
 #define RAYO_Q3_GROUP_BYTES 12
 
 rayo_gemm_i8_fn rayo_gemm_i8_generic;
+#if defined(__wasm_simd128__)
+rayo_gemm_i8_fn rayo_gemm_i8_wasm; /* spike/wasm */
+#endif
 rayo_gemm_f32_fn rayo_gemm_f32_generic;
 rayo_gemm_q4_fn rayo_gemm_q4_generic;
 rayo_gemm_q4_fn rayo_gemm_q3_generic;
